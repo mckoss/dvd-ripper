@@ -1,9 +1,17 @@
 $MakeMkvPath = "C:\Program Files (x86)\MakeMKV\makemkvcon64.exe"
 $DriveLetter = "D:"
-$OutputDir = "C:\Users\Mike\Videos\Ripped Movies\MKVs"
-$MinLength = 3600 # Minimum title length in seconds (1 hour) to isolate the main feature
+$OutputDir = Join-Path $env:USERPROFILE "Videos\Ripped Movies\MKVs"
+$MinLength = 3600
+$AlertSoundPath = Join-Path $env:USERPROFILE "Videos\Ripped Movies\alert.wav"
 
-# Ensure base output directory exists
+# Create a single sound player instance to reuse
+$soundPlayer = $null
+if (Test-Path $AlertSoundPath) {
+    $soundPlayer = New-Object System.Media.SoundPlayer
+    $soundPlayer.SoundLocation = $AlertSoundPath
+}
+
+
 if (-not (Test-Path $OutputDir)) {
     New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 }
@@ -11,49 +19,115 @@ if (-not (Test-Path $OutputDir)) {
 Write-Host "Starting MakeMKV Automation Loop..."
 
 while ($true) {
-    Write-Host "Waiting for disc insertion in drive $DriveLetter..."
+    Write-Host "`nWaiting for disc insertion in drive $DriveLetter..."
 
-    # 1. Poll WMI until media is loaded
+    # 1. Exponential backoff beep until media is inserted
+    $delaySeconds = 2
+    $maxDelaySeconds = 300
+    $timeSinceLastBeep = 0
+
     while ($true) {
         $drive = Get-CimInstance Win32_CDROMDrive | Where-Object { $_.Drive -eq $DriveLetter }
         if ($drive.MediaLoaded) { break }
-        Start-Sleep -Seconds 5
+
+        if ($timeSinceLastBeep -ge $delaySeconds) {
+            # Play WAV file if it exists, otherwise fall back to system beep
+            if ($null -ne $soundPlayer) {
+                $soundPlayer.PlaySync() # Play the sound synchronously (wait for completion)
+            } else {
+                [System.Media.SystemSounds]::Beep.Play()
+            }
+            $timeSinceLastBeep = 0
+
+            $delaySeconds *= 2
+            if ($delaySeconds -gt $maxDelaySeconds) {
+                $delaySeconds = $maxDelaySeconds
+            }
+        }
+
+        Start-Sleep -Seconds 2
+        $timeSinceLastBeep += 2
     }
 
     # 2. Extract and sanitize Volume Name
     $VolumeName = $drive.VolumeName
     if ([string]::IsNullOrWhiteSpace($VolumeName)) { $VolumeName = "UNKNOWN_DISC" }
 
-    # Strip illegal characters for Windows file systems
+    # Add timestamp to ensure unique folder names
+    $timestamp = Get-Date -Format "yy-MM-dd-HH-mm"
     $SafeVolumeName = $VolumeName -replace '[\\/:*?"<>|]', '_'
-    $TitleOutputDir = Join-Path $OutputDir $SafeVolumeName
+    $UniqueVolumeName = "$SafeVolumeName-$timestamp"
+    $FinalOutputFile = Join-Path $OutputDir "$UniqueVolumeName.mkv"
+    $TempOutputDir = Join-Path $OutputDir "temp_$UniqueVolumeName"
 
-    if (-not (Test-Path $TitleOutputDir)) {
-        New-Item -ItemType Directory -Path $TitleOutputDir -Force | Out-Null
+    if (-not (Test-Path $TempOutputDir)) {
+        New-Item -ItemType Directory -Path $TempOutputDir -Force | Out-Null
     }
 
-    Write-Host "Disc detected: $VolumeName. Starting MakeMKV..."
+    Write-Host "Disc detected: $VolumeName. Extracting to staging folder..."
 
-    # 3. Execute MakeMKV
-    # 'disc:0' targets the first optical drive. '--minlength' filters out extras.
-    $ArgumentList = "mkv disc:0 all `"$TitleOutputDir`" --minlength=$MinLength"
-    $process = Start-Process -FilePath $MakeMkvPath -ArgumentList $ArgumentList -Wait -NoNewWindow -PassThru
+    # 3. Execute MakeMKV asynchronously
+    $ArgumentList = "mkv disc:0 all `"$TempOutputDir`" --minlength=$MinLength"
+    $process = Start-Process -FilePath $MakeMkvPath -ArgumentList $ArgumentList -NoNewWindow -PassThru
 
-    if ($process.ExitCode -eq 0) {
-        Write-Host "Extraction complete for $VolumeName. Please swap the disc."
-    } else {
-        Write-Host "MakeMKV exited with code $($process.ExitCode). Please check the disc or logs."
-    }
+    Write-Host "Extraction started. Monitoring file size..."
 
-    # 4. Loop sound until media is removed (tray opened)
-    while ($true) {
-        $checkDrive = Get-CimInstance Win32_CDROMDrive | Where-Object { $_.Drive -eq $DriveLetter }
-        if (-not $checkDrive.MediaLoaded) { break }
-
-        [System.Media.SystemSounds]::Beep.Play()
+    # 4. Monitor file size
+    $progressCounter = 0
+    $trackedMkvFile = $null
+    while (-not $process.HasExited) {
         Start-Sleep -Seconds 2
+        $progressCounter += 2
+
+        # Write progress every 60 seconds (30 iterations of 2-second checks)
+        if ($progressCounter -ge 60) {
+            # Only search for MKV file if we haven't found one yet
+            if ($null -eq $trackedMkvFile) {
+                $mkvFile = Get-ChildItem -Path $TempOutputDir -Filter *.mkv | Sort-Object Length -Descending | Select-Object -First 1
+                if ($mkvFile) {
+                    $trackedMkvFile = $mkvFile
+                    Write-Host "Detected MKV file: $($trackedMkvFile.Name)"
+                }
+            }
+
+            # Show progress using the tracked file
+            if ($null -ne $trackedMkvFile) {
+                # Refresh the file info to get current size
+                $trackedMkvFile.Refresh()
+                $sizeMB = [math]::Round($trackedMkvFile.Length / 1MB, 2)
+                Write-Host "Progress: $sizeMB MB written..."
+            }
+            $progressCounter = 0
+        }
     }
 
-    Write-Host "Disc removed. Resetting for next disc..."
-    Start-Sleep -Seconds 5
+    # Wait for process to fully exit and get final exit code
+    $process.WaitForExit()
+    $exitCode = $process.ExitCode
+
+    # 5. Move file and cleanup
+    if ($null -eq $exitCode -or $exitCode -eq 0) {
+        Write-Host "MakeMKV completed successfully."
+        if ($null -ne $trackedMkvFile -and (Test-Path $trackedMkvFile.FullName)) {
+            Move-Item -Path $trackedMkvFile.FullName -Destination $FinalOutputFile -Force
+            Write-Host "Extraction complete. Saved as: $FinalOutputFile"
+
+            # Only delete temp directory after successful file move
+            if (Test-Path $TempOutputDir) {
+                Remove-Item -Path $TempOutputDir -Recurse -Force
+            }
+        } else {
+            Write-Host "No tracked MKV file found to move."
+        }
+    } else {
+        Write-Host "MakeMKV exited with code $exitCode."
+    }
+
+    # 6. Eject drive
+    Write-Host "Ejecting drive $DriveLetter..."
+    $shell = New-Object -ComObject Shell.Application
+    $shellDrive = $shell.Namespace(17).ParseName($DriveLetter)
+    if ($shellDrive) {
+        $shellDrive.InvokeVerb("Eject")
+    }
 }
