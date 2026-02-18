@@ -1,5 +1,9 @@
+param (
+    [string]$Drive = "D"
+)
+
 $MakeMkvPath = "C:\Program Files (x86)\MakeMKV\makemkvcon64.exe"
-$DriveLetter = "D:"
+$DriveLetter = "$($Drive.TrimEnd(':')):"
 $OutputDir = Join-Path $env:USERPROFILE "Videos\Ripped Movies\MKVs"
 $MinLength = 3600
 $AlertSoundPath = Join-Path $env:USERPROFILE "Videos\Ripped Movies\alert.wav"
@@ -58,7 +62,7 @@ while ($true) {
     $SafeVolumeName = $VolumeName -replace '[\\/:*?"<>|]', '_'
     $UniqueVolumeName = "$SafeVolumeName-$timestamp"
     $FinalOutputFile = Join-Path $OutputDir "$UniqueVolumeName.mkv"
-    $TempOutputDir = Join-Path $OutputDir "temp_$UniqueVolumeName"
+    $TempOutputDir = Join-Path $OutputDir $UniqueVolumeName
 
     if (-not (Test-Path $TempOutputDir)) {
         New-Item -ItemType Directory -Path $TempOutputDir -Force | Out-Null
