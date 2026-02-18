@@ -31,8 +31,7 @@ while ($true) {
     $timeSinceLastBeep = 0
 
     while ($true) {
-        $drive = Get-CimInstance Win32_CDROMDrive | Where-Object { $_.Drive -eq $DriveLetter }
-        if ($drive.MediaLoaded) { break }
+        if (Test-Path "$DriveLetter\") { break }
 
         if ($timeSinceLastBeep -ge $delaySeconds) {
             # Play WAV file if it exists, otherwise fall back to system beep
@@ -54,7 +53,8 @@ while ($true) {
     }
 
     # 2. Extract and sanitize Volume Name
-    $VolumeName = $drive.VolumeName
+    $volume = Get-Volume -DriveLetter $DriveLetter.TrimEnd(':') -ErrorAction SilentlyContinue
+    $VolumeName = $volume.FileSystemLabel
     if ([string]::IsNullOrWhiteSpace($VolumeName)) { $VolumeName = "UNKNOWN_DISC" }
 
     # Add timestamp to ensure unique folder names
