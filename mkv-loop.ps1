@@ -25,7 +25,7 @@ Write-Host "Starting MakeMKV Automation Loop..."
 while ($true) {
     Write-Host "`nWaiting for disc insertion in drive $DriveLetter..."
 
-    # 1. Exponential backoff beep until media is inserted
+    # Exponential backoff beep until media is inserted
     $delaySeconds = 2
     $maxDelaySeconds = 300
     $timeSinceLastBeep = 0
@@ -52,10 +52,14 @@ while ($true) {
         $timeSinceLastBeep += 2
     }
 
-    # 2. Extract and sanitize Volume Name
+    # Extract and sanitize Volume Name
     $volume = Get-Volume -DriveLetter $DriveLetter.TrimEnd(':') -ErrorAction SilentlyContinue
     $VolumeName = $volume.FileSystemLabel
-    if ([string]::IsNullOrWhiteSpace($VolumeName)) { $VolumeName = "UNKNOWN_DISC" }
+    if ([string]::IsNullOrWhiteSpace($VolumeName)) {
+        Write-Host "No volume label detected. Disc may not be ready. Retrying..."
+        Start-Sleep -Seconds 5
+        continue
+    }
 
     # Add timestamp to ensure unique folder names
     $timestamp = Get-Date -Format "yy-MM-dd-HH-mm"
@@ -64,19 +68,18 @@ while ($true) {
     $FinalOutputFile = Join-Path $OutputDir "$UniqueVolumeName.mkv"
     $TempOutputDir = Join-Path $OutputDir $UniqueVolumeName
 
+    Write-Host "Disc detected: $VolumeName. Extracting to staging folder..."
+
+    # Execute MakeMKV asynchronously using dev: to target specific drive
     if (-not (Test-Path $TempOutputDir)) {
         New-Item -ItemType Directory -Path $TempOutputDir -Force | Out-Null
     }
-
-    Write-Host "Disc detected: $VolumeName. Extracting to staging folder..."
-
-    # 3. Execute MakeMKV asynchronously using dev: to target specific drive
     $ArgumentList = "mkv dev:$DriveLetter all `"$TempOutputDir`" --minlength=$MinLength"
     $process = Start-Process -FilePath $MakeMkvPath -ArgumentList $ArgumentList -NoNewWindow -PassThru
 
     Write-Host "Extraction started. Monitoring file size..."
 
-    # 5. Monitor file size
+    # Monitor file size
     $progressCounter = 0
     $trackedMkvFile = $null
     while (-not $process.HasExited) {
@@ -109,7 +112,7 @@ while ($true) {
     $process.WaitForExit()
     $exitCode = $process.ExitCode
 
-    # 6. Move file and cleanup
+    # Move file and cleanup
     if ($null -eq $exitCode -or $exitCode -eq 0) {
         Write-Host "MakeMKV completed successfully."
         if ($null -ne $trackedMkvFile -and (Test-Path $trackedMkvFile.FullName)) {
@@ -127,7 +130,7 @@ while ($true) {
         Write-Host "MakeMKV exited with code $exitCode."
     }
 
-    # 7. Eject drive
+    # Eject drive
     Write-Host "Ejecting drive $DriveLetter..."
     $shell = New-Object -ComObject Shell.Application
     $shellDrive = $shell.Namespace(17).ParseName($DriveLetter)
