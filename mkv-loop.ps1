@@ -52,13 +52,19 @@ while ($true) {
         $timeSinceLastBeep += 2
     }
 
-    # Extract and sanitize Volume Name
+    # Extract and sanitize Volume Name (retry once if blank, to filter transient detections)
     $volume = Get-Volume -DriveLetter $DriveLetter.TrimEnd(':') -ErrorAction SilentlyContinue
     $VolumeName = $volume.FileSystemLabel
     if ([string]::IsNullOrWhiteSpace($VolumeName)) {
-        Write-Host "No volume label detected. Disc may not be ready. Retrying..."
+        Write-Host "No volume label detected. Waiting for disc to settle..."
         Start-Sleep -Seconds 5
-        continue
+        if (-not (Test-Path "$DriveLetter\")) {
+            Write-Host "Drive no longer accessible. Retrying..."
+            continue
+        }
+        $volume = Get-Volume -DriveLetter $DriveLetter.TrimEnd(':') -ErrorAction SilentlyContinue
+        $VolumeName = $volume.FileSystemLabel
+        if ([string]::IsNullOrWhiteSpace($VolumeName)) { $VolumeName = "UNKNOWN_DISC" }
     }
 
     # Add timestamp to ensure unique folder names
