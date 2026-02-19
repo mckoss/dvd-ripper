@@ -122,6 +122,14 @@ while ($true) {
     if ($null -eq $exitCode -or $exitCode -eq 0) {
         Write-Host "MakeMKV completed successfully."
         if ($null -ne $trackedMkvFile -and (Test-Path $trackedMkvFile.FullName)) {
+            # Use the MKV filename if it's more descriptive than the volume label
+            $mkvBaseName = $trackedMkvFile.BaseName -replace '-[A-Z]\d+_t\d+$', ''  # Strip track suffix like -A5_t00
+            $genericLabels = @('UNKNOWN_DISC', 'DVD_VIDEO', 'DVDVOLUME', 'DVD')
+            if ($mkvBaseName.Length -gt 0 -and $genericLabels -contains $VolumeName) {
+                $SafeMkvName = $mkvBaseName -replace '[\\/:*?"<>|]', '_'
+                $FinalOutputFile = Join-Path $OutputDir "$SafeMkvName-$timestamp.mkv"
+                Write-Host "Using MKV filename '$mkvBaseName' instead of volume label '$VolumeName'"
+            }
             Move-Item -Path $trackedMkvFile.FullName -Destination $FinalOutputFile -Force
             Write-Host "Extraction complete. Saved as: $FinalOutputFile"
 
