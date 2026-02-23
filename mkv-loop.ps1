@@ -1,12 +1,28 @@
 param (
-    [string]$Drive = "D"
+    [string]$InputDrive,
+    [string]$OutputDir
 )
 
 $MakeMkvPath = "C:\Program Files (x86)\MakeMKV\makemkvcon64.exe"
-$DriveLetter = "$($Drive.TrimEnd(':')):"
-$OutputDir = Join-Path $env:USERPROFILE "Videos\Ripped Movies\MKVs"
+
+if ([string]::IsNullOrWhiteSpace($InputDrive)) {
+    $DefaultDrive = "D"
+    $InputDrive = Read-Host "Enter input drive letter (default: $DefaultDrive)"
+    if ([string]::IsNullOrWhiteSpace($InputDrive)) {
+        $InputDrive = $DefaultDrive
+    }
+}
+$InputDriveLetter = "$($InputDrive.TrimEnd(':')):"
+
+if ([string]::IsNullOrWhiteSpace($OutputDir)) {
+    $DefaultOutputDir = Join-Path $env:USERPROFILE "Videos\Ripped Movies\MKVs"
+    $OutputDir = Read-Host "Enter output directory for ripped MKVs (default: $DefaultOutputDir)"
+    if ([string]::IsNullOrWhiteSpace($OutputDir)) {
+        $OutputDir = $DefaultOutputDir
+    }
+}
 $MinLength = 3600
-$AlertSoundPath = Join-Path $env:USERPROFILE "Videos\Ripped Movies\alert.wav"
+$AlertSoundPath = Join-Path $PSScriptRoot "alert.wav"
 
 # Create a single sound player instance to reuse
 $soundPlayer = $null
@@ -23,7 +39,7 @@ if (-not (Test-Path $OutputDir)) {
 Write-Host "Starting MakeMKV Automation Loop..."
 
 while ($true) {
-    Write-Host "`nWaiting for disc insertion in drive $DriveLetter..."
+    Write-Host "`nWaiting for disc insertion in drive $InputDriveLetter..."
 
     # Exponential backoff beep until media is inserted
     $delaySeconds = 2
@@ -31,7 +47,7 @@ while ($true) {
     $timeSinceLastBeep = 0
 
     while ($true) {
-        if (Test-Path "$DriveLetter\") { break }
+        if (Test-Path "$InputDriveLetter\") { break }
 
         if ($timeSinceLastBeep -ge $delaySeconds) {
             # Play WAV file if it exists, otherwise fall back to system beep
@@ -53,16 +69,16 @@ while ($true) {
     }
 
     # Extract and sanitize Volume Name (retry once if blank, to filter transient detections)
-    $volume = Get-Volume -DriveLetter $DriveLetter.TrimEnd(':') -ErrorAction SilentlyContinue
+    $volume = Get-Volume -DriveLetter $InputDriveLetter.TrimEnd(':') -ErrorAction SilentlyContinue
     $VolumeName = $volume.FileSystemLabel
     if ([string]::IsNullOrWhiteSpace($VolumeName)) {
         Write-Host "No volume label detected. Waiting for disc to settle..."
         Start-Sleep -Seconds 5
-        if (-not (Test-Path "$DriveLetter\")) {
+        if (-not (Test-Path "$InputDriveLetter\")) {
             Write-Host "Drive no longer accessible. Retrying..."
             continue
         }
-        $volume = Get-Volume -DriveLetter $DriveLetter.TrimEnd(':') -ErrorAction SilentlyContinue
+        $volume = Get-Volume -DriveLetter $InputDriveLetter.TrimEnd(':') -ErrorAction SilentlyContinue
         $VolumeName = $volume.FileSystemLabel
         if ([string]::IsNullOrWhiteSpace($VolumeName)) { $VolumeName = "UNKNOWN_DISC" }
     }
@@ -80,7 +96,7 @@ while ($true) {
     if (-not (Test-Path $TempOutputDir)) {
         New-Item -ItemType Directory -Path $TempOutputDir -Force | Out-Null
     }
-    $ArgumentList = "mkv dev:$DriveLetter all `"$TempOutputDir`" --minlength=$MinLength"
+    $ArgumentList = "mkv dev:$InputDriveLetter all `"$TempOutputDir`" --minlength=$MinLength"
     $process = Start-Process -FilePath $MakeMkvPath -ArgumentList $ArgumentList -NoNewWindow -PassThru
 
     Write-Host "Extraction started. Monitoring file size..."
@@ -145,9 +161,9 @@ while ($true) {
     }
 
     # Eject drive
-    Write-Host "Ejecting drive $DriveLetter..."
+    Write-Host "Ejecting drive $InputDriveLetter..."
     $shell = New-Object -ComObject Shell.Application
-    $shellDrive = $shell.Namespace(17).ParseName($DriveLetter)
+    $shellDrive = $shell.Namespace(17).ParseName($InputDriveLetter)
     if ($shellDrive) {
         $shellDrive.InvokeVerb("Eject")
     }

@@ -29,27 +29,30 @@ ejects the disc when done, and waits for the next one.
 
 ## Usage
 
-The script expects to be run from a `Videos\Ripped Movies` folder in the current
-user's home directory (e.g., `C:\Users\<username>\Videos\Ripped Movies`). Output
-MKV files are saved to a `MKVs` subfolder within that directory.
-
 ```powershell
-# Use default drive (D:)
+# Be prompted for both drive letter and output directory
 .\mkv-loop.ps1
 
 # Specify a drive letter
-.\mkv-loop.ps1 -Drive F
+.\mkv-loop.ps1 -InputDrive F
+
+# Specify both drive and output directory
+.\mkv-loop.ps1 -InputDrive F -OutputDir "E:\My Rips"
 
 # Run multiple drives in parallel (in separate terminals)
-.\mkv-loop.ps1 -Drive D
-.\mkv-loop.ps1 -Drive F
+.\mkv-loop.ps1 -InputDrive D -OutputDir "C:\Rips\DriveD"
+.\mkv-loop.ps1 -InputDrive F -OutputDir "C:\Rips\DriveF"
 ```
+
+If `-InputDrive` or `-OutputDir` are not provided, the script will interactively
+prompt for each, defaulting to `D` and `~\Videos\Ripped Movies\MKVs` respectively.
 
 ## Parameters
 
-| Parameter | Type   | Default | Description                              |
-|-----------|--------|---------|------------------------------------------|
-| `-Drive`  | String | `D`     | The drive letter to monitor. Accepts with or without a colon (e.g., `F` or `F:`). |
+| Parameter     | Type   | Default                        | Description                              |
+|---------------|--------|--------------------------------|------------------------------------------|
+| `-InputDrive` | String | *(prompted interactively)*     | The drive letter to monitor. Accepts with or without a colon (e.g., `F` or `F:`). If omitted, the script prompts for it with a default of `D`. |
+| `-OutputDir`  | String | *(prompted interactively)*     | Directory where ripped MKV files are saved. If omitted, the script prompts for it with a default of `~\Videos\Ripped Movies\MKVs`. |
 
 ## Configuration
 
@@ -72,7 +75,3 @@ The following variables can be modified at the top of the script:
 │   └── MOVIE_NAME-26-02-18-17-00/   # Temporary folder (deleted after successful rip)
 └── ...
 ```
-
-## License
-
-MIT
