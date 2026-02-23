@@ -15,7 +15,7 @@ if ([string]::IsNullOrWhiteSpace($InputDrive)) {
 $InputDriveLetter = "$($InputDrive.TrimEnd(':')):"
 
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
-    $DefaultOutputDir = Join-Path $env:USERPROFILE "Videos\Ripped Movies\MKVs"
+    $DefaultOutputDir = "G:\Movies\MKVs"
     $OutputDir = Read-Host "Enter output directory for ripped MKVs (default: $DefaultOutputDir)"
     if ([string]::IsNullOrWhiteSpace($OutputDir)) {
         $OutputDir = $DefaultOutputDir
