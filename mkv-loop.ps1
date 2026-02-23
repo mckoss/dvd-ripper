@@ -136,8 +136,18 @@ while ($true) {
 
     # Move file and cleanup
     if ($null -eq $exitCode -or $exitCode -eq 0) {
-        Write-Host "MakeMKV completed successfully."
+        # If we didn't track an MKV during progress monitoring, scan the temp dir now
+        if ($null -eq $trackedMkvFile -or -not (Test-Path $trackedMkvFile.FullName)) {
+            $foundMkv = Get-ChildItem -Path $TempOutputDir -Filter *.mkv -ErrorAction SilentlyContinue |
+                Sort-Object Length -Descending | Select-Object -First 1
+            if ($foundMkv) {
+                $trackedMkvFile = $foundMkv
+                Write-Host "Found MKV file after completion: $($trackedMkvFile.Name)"
+            }
+        }
+
         if ($null -ne $trackedMkvFile -and (Test-Path $trackedMkvFile.FullName)) {
+            Write-Host "MakeMKV completed successfully."
             # Use the MKV filename if it's more descriptive than the volume label
             $mkvBaseName = $trackedMkvFile.BaseName -replace '-[A-Z]\d+_t\d+$', ''  # Strip track suffix like -A5_t00
             $genericLabels = @('UNKNOWN_DISC', 'DVD_VIDEO', 'DVDVOLUME', 'DVD')
@@ -149,12 +159,22 @@ while ($true) {
             Move-Item -Path $trackedMkvFile.FullName -Destination $FinalOutputFile -Force
             Write-Host "Extraction complete. Saved as: $FinalOutputFile"
 
-            # Only delete temp directory after successful file move
+            # Only delete temp directory if it's empty
             if (Test-Path $TempOutputDir) {
-                Remove-Item -Path $TempOutputDir -Recurse -Force
+                $remaining = Get-ChildItem -Path $TempOutputDir -ErrorAction SilentlyContinue
+                if ($remaining.Count -eq 0) {
+                    Remove-Item -Path $TempOutputDir -Force
+                } else {
+                    Write-Host "Temp folder not empty - additional files left for inspection: $TempOutputDir"
+                    $remaining | ForEach-Object { Write-Host "  $($_.Name)" }
+                }
             }
         } else {
-            Write-Host "No tracked MKV file found to move."
+            Write-Host "WARNING: MakeMKV produced no output files. Disc may be damaged or unreadable."
+            # Clean up empty temp directory
+            if ((Test-Path $TempOutputDir) -and (Get-ChildItem -Path $TempOutputDir -ErrorAction SilentlyContinue).Count -eq 0) {
+                Remove-Item -Path $TempOutputDir -Force
+            }
         }
     } else {
         Write-Host "MakeMKV exited with code $exitCode."
