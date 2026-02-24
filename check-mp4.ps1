@@ -12,6 +12,7 @@ if ([string]::IsNullOrWhiteSpace($OutputDir)) {
 
 $MkvDir = Join-Path $OutputDir "MKVs"
 $Mp4Dir = Join-Path $OutputDir "MP4s"
+$Mp4UploadDir = Join-Path $Mp4Dir "Upload"
 
 if (-not (Test-Path $MkvDir)) {
     Write-Host "MKVs directory not found: $MkvDir"
@@ -30,10 +31,13 @@ if ($timestamped.Count -gt 0) {
     exit 1
 }
 
-# Get MP4 titles (basenames without extension)
+# Get MP4 titles from both MP4s and MP4s\Upload directories
 $mp4Titles = @()
 if (Test-Path $Mp4Dir) {
-    $mp4Titles = Get-ChildItem -Path $Mp4Dir -Filter *.mp4 | ForEach-Object { $_.BaseName }
+    $mp4Titles += Get-ChildItem -Path $Mp4Dir -Filter *.mp4 | ForEach-Object { $_.BaseName }
+}
+if (Test-Path $Mp4UploadDir) {
+    $mp4Titles += Get-ChildItem -Path $Mp4UploadDir -Filter *.mp4 | ForEach-Object { $_.BaseName }
 }
 
 # Find MKVs without a corresponding MP4
