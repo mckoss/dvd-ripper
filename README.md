@@ -4,9 +4,33 @@ A set of PowerShell scripts that automate the full DVD archival workflow:
 ripping discs to MKV, encoding to MP4 with HandBrake, and uploading to Google Drive.
 
 Files flow through a folder-based pipeline where each file's location represents its
-processing state. Each loop can be interrupted and restarted independently.
+processing state. Each script can be interrupted and restarted independently — it
+simply rescans its input folder to pick up where it left off.
 
-## Workflow
+## Quick Start
+
+1. **Start ripping** — Open a PowerShell terminal for each optical drive and run
+   `.\ripping-loop.ps1`. Each instance monitors one drive, rips the disc, ejects it,
+   and plays an alert sound so you know to insert the next one. Just keep feeding discs.
+
+2. **Confirm titles** — DVD discs don't carry reliable movie titles, so ripped files
+   land with a `-check-title` suffix (e.g., `GRAVITY-check-title.mkv`). Browse to
+   `processing\ripped-for-encoding\` and rename each file — correct the title if needed
+   and remove the `-check-title` suffix (e.g., `Gravity.mkv`). This is the only manual
+   step in the pipeline.
+
+3. **Encode** — Run `.\encode-backlog.ps1` whenever you're ready. It shows which files
+   need encoding, archives already-encoded MKVs, and launches HandBrake pointed at
+   the ripped folder. In HandBrake, set the output to `processing\encoded-for-upload\`
+   and start the queue.
+
+4. **Upload** — Run `.\upload-mp4s.ps1` to push encoded MP4s to Google Drive via rclone.
+   After uploading, it offers to move the files to the `MP4s\` archive folder.
+
+Steps 1–2 can happen continuously while steps 3–4 are run on demand at any time.
+Encoding and uploading are safe to run even while ripping is still in progress.
+
+## Workflow Details
 
 ### 1. Rip DVDs to MKV (`ripping-loop.ps1`)
 
@@ -82,7 +106,8 @@ MKVs are archived to `MKVs/` once encoding is confirmed.
 - **Multi-drive support** -- Run multiple instances of the script on different drives to rip
   in parallel.
 - **Exponential backoff alerts** -- Plays an audio alert (WAV file) when waiting for a disc,
-  with increasing intervals (2s -> 4s -> 8s -> ... up to 5 minutes).
+  with increasing intervals (2s -> 4s -> 8s -> ... up to 15 minutes). Alerts are
+  silenced during quiet hours (11 PM – 7 AM).
 - **Smart file naming** -- Uses the disc volume label for filenames, falling back to the
   MKV filename from MakeMKV if the volume label is generic (e.g., `DVD_VIDEO`).
   All ripped files get a `-check-title` suffix until confirmed.
@@ -99,8 +124,30 @@ MKVs are archived to `MKVs/` once encoding is confirmed.
 - [HandBrake](https://handbrake.fr/) installed
   (default path: `C:\Program Files\HandBrake\HandBrake.exe`)
 - [rclone](https://rclone.org/) installed and configured with a `gdrive` remote
+  (see [rclone Setup](#rclone-setup) below)
 - Windows PowerShell 5.1 or later
 - One or more optical disc drives
+
+## rclone Setup
+
+The `upload-mp4s.ps1` script uses rclone to copy MP4 files to a folder called
+`Movies` in your Google Drive. The remote is hardcoded as `gdrive:Movies`.
+
+1. Install rclone: https://rclone.org/downloads/
+2. Run `rclone config` and create a new remote named **`gdrive`** of type
+   **Google Drive**. Follow the prompts to authorize access to your account.
+3. Create a `Movies` folder in the root of your Google Drive (if it doesn't
+   already exist). Uploaded MP4 files will appear here as flat files
+   (e.g., `gdrive:Movies/Movie Title.mp4`).
+
+To verify the setup, run:
+
+```powershell
+rclone lsl gdrive:Movies --human-readable
+```
+
+If you want to use a different remote name or destination folder, edit the
+`rclone copy` line near the top of `upload-mp4s.ps1`.
 
 ## ripping-loop.ps1 Parameters
 
