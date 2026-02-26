@@ -140,9 +140,20 @@ while ($true) {
     $exitCode = $process.ExitCode
 
     # Move file and cleanup
+    $shortTitleWarning = $false
     if ($null -eq $exitCode -or $exitCode -eq 0) {
-        # If we didn't track an MKV during progress monitoring, scan the temp dir now
-        if ($null -eq $trackedMkvFile -or -not (Test-Path $trackedMkvFile.FullName)) {
+        # Check if MakeMKV produced any output
+        $mkvFiles = Get-ChildItem -Path $TempOutputDir -Filter *.mkv -ErrorAction SilentlyContinue
+        if ($mkvFiles.Count -eq 0) {
+            Write-Host "No titles found over $([math]::Round($MinLength / 60)) minutes. Retrying with no minimum length to get the longest title..."
+            $shortTitleWarning = $true
+            $ArgumentList = "mkv dev:$InputDriveLetter all `"$TempOutputDir`" --minlength=0"
+            $process = Start-Process -FilePath $MakeMkvPath -ArgumentList $ArgumentList -NoNewWindow -PassThru
+            $process.WaitForExit()
+        }
+
+        # Find the largest MKV (the main feature) from the temp directory
+        if ($shortTitleWarning -or $null -eq $trackedMkvFile -or -not (Test-Path $trackedMkvFile.FullName)) {
             $foundMkv = Get-ChildItem -Path $TempOutputDir -Filter *.mkv -ErrorAction SilentlyContinue |
                 Sort-Object Length -Descending | Select-Object -First 1
             if ($foundMkv) {
@@ -152,6 +163,10 @@ while ($true) {
         }
 
         if ($null -ne $trackedMkvFile -and (Test-Path $trackedMkvFile.FullName)) {
+            if ($shortTitleWarning) {
+                $sizeMB = [math]::Round($trackedMkvFile.Length / 1MB, 0)
+                Write-Host "WARNING: No title over $([math]::Round($MinLength / 60)) min found. Kept longest title ($sizeMB MB): $($trackedMkvFile.Name)" -ForegroundColor Yellow
+            }
             Write-Host "MakeMKV completed successfully."
             # Determine best name: prefer MKV filename over generic volume labels
             $mkvBaseName = $trackedMkvFile.BaseName -replace '-[A-Z]\d+_t\d+$', ''  # Strip track suffix like -A5_t00
