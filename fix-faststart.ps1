@@ -2,19 +2,23 @@
 # Checks MP4 files for moov atom placement and applies faststart if needed.
 
 param(
-    [string]$SourceDir
+    [string]$MoviesDir
 )
 
-if (-not $SourceDir) {
-    $defaultDir = "G:\Movies\MP4s"
-    $SourceDir = Read-Host "Enter MP4 directory (default: $defaultDir)"
-    if ([string]::IsNullOrWhiteSpace($SourceDir)) { $SourceDir = $defaultDir }
+if (-not $MoviesDir) {
+    $defaultDir = "G:\Movies"
+    $MoviesDir = Read-Host "Enter movies directory (default: $defaultDir)"
+    if ([string]::IsNullOrWhiteSpace($MoviesDir)) { $MoviesDir = $defaultDir }
 }
 
-if (-not (Test-Path $SourceDir)) {
-    Write-Host "Directory not found: $SourceDir" -ForegroundColor Red
+if (-not (Test-Path $MoviesDir)) {
+    Write-Host "Directory not found: $MoviesDir" -ForegroundColor Red
     exit 1
 }
+
+$Mp4ArchiveDir = Join-Path $MoviesDir "MP4s"
+$EncodedDir    = Join-Path $MoviesDir "processing\encoded-for-upload"
+$TempDir       = Join-Path $MoviesDir "processing\temp"
 
 # Verify ffmpeg is available
 if (-not (Get-Command "ffmpeg" -ErrorAction SilentlyContinue)) {
@@ -59,13 +63,19 @@ function Get-FirstMediaAtom {
     return $null
 }
 
-$mp4Files = Get-ChildItem -Path $SourceDir -Filter *.mp4 -File
+$mp4Files = @()
+$scanDirs = @($Mp4ArchiveDir, $EncodedDir) | Where-Object { Test-Path $_ }
+foreach ($dir in $scanDirs) {
+    $mp4Files += Get-ChildItem -Path $dir -Filter *.mp4 -File
+}
 if ($mp4Files.Count -eq 0) {
-    Write-Host "No MP4 files found in $SourceDir"
+    Write-Host "No MP4 files found in scanned directories."
     exit 0
 }
 
-Write-Host "Scanning $($mp4Files.Count) MP4 file(s) in $SourceDir...`n"
+Write-Host "Scanning $($mp4Files.Count) MP4 file(s) across $($scanDirs.Count) folder(s)..."
+foreach ($dir in $scanDirs) { Write-Host "  $dir" -ForegroundColor Gray }
+Write-Host ""
 
 $alreadyOk = @()
 $needsFix = @()
@@ -74,19 +84,20 @@ $fixed = @()
 
 # Phase 1: Scan all files to determine moov atom placement
 foreach ($file in $mp4Files) {
-    Write-Host "Checking: $($file.Name)" -NoNewline
+    $relDir = $file.DirectoryName.Replace($MoviesDir, '').TrimStart('\')
+    Write-Host "Checking: [$relDir] $($file.Name)" -NoNewline
 
     $firstAtom = Get-FirstMediaAtom -FilePath $file.FullName
 
     if ($null -eq $firstAtom) {
         Write-Host " - Could not determine atom order, skipping" -ForegroundColor Yellow
-        $failed += [PSCustomObject]@{ Name = $file.Name; Reason = "Could not find moov/mdat atoms" }
+        $failed += [PSCustomObject]@{ Name = "[$relDir] $($file.Name)"; Reason = "Could not find moov/mdat atoms" }
         continue
     }
 
     if ($firstAtom -eq 'moov') {
-        Write-Host " - OK (moov is already at head)" -ForegroundColor Green
-        $alreadyOk += $file.Name
+        Write-Host " - OK" -ForegroundColor Green
+        $alreadyOk += [PSCustomObject]@{ Name = $file.Name; RelDir = $relDir }
         continue
     }
 
@@ -101,7 +112,8 @@ if ($needsFix.Count -eq 0) {
 } else {
     Write-Host "Files needing faststart fix ($($needsFix.Count)):" -ForegroundColor Cyan
     $needsFix | ForEach-Object {
-        Write-Host "  $($_.Name) ($([math]::Round($_.Length / 1MB, 1)) MB)"
+        $relDir = $_.DirectoryName.Replace($MoviesDir, '').TrimStart('\')
+        Write-Host "  [$relDir] $($_.Name) ($([math]::Round($_.Length / 1MB, 1)) MB)"
     }
     Write-Host ""
     $confirm = Read-Host "Proceed with fixing $($needsFix.Count) file(s)? (y/n)"
@@ -112,10 +124,10 @@ if ($needsFix.Count -eq 0) {
 
     Write-Host ""
     foreach ($file in $needsFix) {
-        Write-Host "Processing: $($file.Name)..." -ForegroundColor Cyan
-        $tempDir = Join-Path (Split-Path $SourceDir -Parent) "processing\temp"
-        if (-not (Test-Path $tempDir)) { New-Item -Path $tempDir -ItemType Directory -Force | Out-Null }
-        $tempFile = Join-Path $tempDir $file.Name
+        $relDir = $file.DirectoryName.Replace($MoviesDir, '').TrimStart('\')
+        Write-Host "Processing: [$relDir] $($file.Name)..." -ForegroundColor Cyan
+        if (-not (Test-Path $TempDir)) { New-Item -Path $TempDir -ItemType Directory -Force | Out-Null }
+        $tempFile = Join-Path $TempDir $file.Name
 
         try {
             $ffmpegOutput = & ffmpeg -i $file.FullName -c copy -movflags +faststart $tempFile -y 2>&1 | Out-String
@@ -136,12 +148,12 @@ if ($needsFix.Count -eq 0) {
             # Replace original with fixed file
             Remove-Item -Path $file.FullName -Force
             Move-Item -Path $tempFile -Destination $file.FullName -Force
-            Write-Host "  Fixed: $($file.Name) ($([math]::Round($origSize / 1MB, 1)) MB)" -ForegroundColor Green
-            $fixed += $file.Name
+            Write-Host "  Fixed: [$relDir] $($file.Name) ($([math]::Round($origSize / 1MB, 1)) MB)" -ForegroundColor Green
+            $fixed += [PSCustomObject]@{ Name = $file.Name; RelDir = $relDir }
         }
         catch {
             Write-Host "  FAILED: $($file.Name) - $_" -ForegroundColor Red
-            $failed += [PSCustomObject]@{ Name = $file.Name; Reason = $_.ToString() }
+            $failed += [PSCustomObject]@{ Name = $file.Name; RelDir = $relDir; Reason = $_.ToString() }
             # Leave temp file in processing\temp for inspection
         }
     }
@@ -154,6 +166,6 @@ Write-Host "Already OK:      $($alreadyOk.Count)" -ForegroundColor Green
 Write-Host "Fixed:           $($fixed.Count)" -ForegroundColor Cyan
 if ($failed.Count -gt 0) {
     Write-Host "Failed:          $($failed.Count)" -ForegroundColor Red
-    $failed | ForEach-Object { Write-Host "  $($_.Name): $($_.Reason)" -ForegroundColor Red }
+    $failed | ForEach-Object { Write-Host "  [$($_.RelDir)] $($_.Name): $($_.Reason)" -ForegroundColor Red }
 }
 Write-Host "==================`n"
