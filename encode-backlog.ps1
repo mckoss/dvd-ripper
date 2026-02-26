@@ -53,8 +53,12 @@ $alreadyEncoded = Get-ChildItem -Path $RippedDir -Filter *.mkv | Where-Object {
 if ($alreadyEncoded.Count -gt 0) {
     Write-Host "Moving already-encoded MKVs to archive ($($alreadyEncoded.Count)):"
     $alreadyEncoded | ForEach-Object {
-        Move-Item -Path $_.FullName -Destination $MkvArchiveDir -Force
-        Write-Host "  Archived: $($_.Name)"
+        try {
+            Move-Item -Path $_.FullName -Destination $MkvArchiveDir -Force -ErrorAction Stop
+            Write-Host "  Archived: $($_.Name)"
+        } catch {
+            Write-Host "  Skipped (file in use): $($_.Name)" -ForegroundColor Yellow
+        }
     }
     Write-Host ""
 }
