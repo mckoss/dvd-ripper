@@ -3,9 +3,12 @@
 A set of PowerShell scripts that automate the full DVD archival workflow:
 ripping discs to MKV, encoding to MP4 with HandBrake, and uploading to Google Drive.
 
+Files flow through a folder-based pipeline where each file's location represents its
+processing state. Each loop can be interrupted and restarted independently.
+
 ## Workflow
 
-### 1. Rip DVDs to MKV (`mkv-loop.ps1`)
+### 1. Rip DVDs to MKV (`ripping-loop.ps1`)
 
 Continuously monitors an optical drive, rips inserted discs using
 [MakeMKV](https://www.makemkv.com/), ejects, and waits for the next disc.
@@ -13,61 +16,76 @@ Run multiple instances in separate terminals for parallel ripping from
 different drives.
 
 ```powershell
-.\mkv-loop.ps1                                        # prompted for drive and output dir
-.\mkv-loop.ps1 -InputDrive D -OutputDir "G:\Movies\MKVs"  # non-interactive
+.\ripping-loop.ps1                                            # prompted for drive and movies dir
+.\ripping-loop.ps1 -InputDrive D -MoviesDir "G:\Movies"        # non-interactive
 ```
 
-Ripped files land in `MKVs/` with a timestamp suffix (e.g., `MOVIE-26-02-22-17-54.mkv`).
-Rename them to the correct movie title before proceeding.
+Ripped files land in `processing/ripped-for-encoding/` with a `-check-title` suffix
+(e.g., `MOVIE_TITLE-check-title.mkv`). Confirm or correct the title by removing the
+`-check-title` suffix before proceeding to encoding.
 
-### 2. Prepare for HandBrake encoding (`check-mp4.ps1`)
+### 2. Encode with HandBrake (`encode-backlog.ps1`)
 
-Compares `MKVs/` against `MP4s/` to find MKVs that haven't been encoded yet.
-Flags any files still carrying timestamp names that need renaming first.
-Optionally moves the un-encoded files into `MKVs/TBD/` and launches HandBrake
-pointed at that folder so you can queue them all at once.
+Scans `processing/ripped-for-encoding/` for MKVs that need encoding.
+Flags any files still carrying a `-check-title` suffix that need confirmation.
+Automatically archives MKVs to `MKVs/` once a corresponding MP4 is found.
+Launches HandBrake pointed at the ripped folder for remaining files.
 
 ```powershell
-.\check-mp4.ps1                              # prompted for movies directory
-.\check-mp4.ps1 -OutputDir "G:\Movies"       # non-interactive
+.\encode-backlog.ps1                              # prompted for movies directory
+.\encode-backlog.ps1 -MoviesDir "G:\Movies"       # non-interactive
 ```
 
 In HandBrake, use the **DVD Ripped Archive** preset (included in
-`Handbrake DVD Preset.json`), set the output to `MP4s/`, and start the queue.
+`Handbrake DVD Preset.json`), set the output to `processing/encoded-for-upload/`,
+and start the queue.
 
-### 3. Upload MP4s to Google Drive (`update-drive.ps1`)
+### 3. Upload MP4s to Google Drive (`upload-mp4s.ps1`)
 
-Copies finalized MP4 files to Google Drive via rclone. Automatically skips
-files that are still locked by HandBrake (actively encoding).
+Uploads encoded MP4 files from `processing/encoded-for-upload/` to Google Drive
+via rclone. Automatically skips files still locked by HandBrake. After upload,
+moves MP4s to the `MP4s/` archive.
 
 ```powershell
-.\update-drive.ps1
+.\upload-mp4s.ps1                              # prompted for movies directory
+.\upload-mp4s.ps1 -MoviesDir "G:\Movies"       # non-interactive
 ```
 
 ## Directory Structure
 
 ```
-G:\Movies\                        # Root movies directory (configurable)
-  MKVs\                           # Raw rips from MakeMKV
-    Movie Title.mkv               # Renamed, ready for encoding
-    UNKNOWN_DISC-26-02-22-17-54.mkv  # Needs renaming
-    TBD\                          # Staged for HandBrake (created by check-mp4.ps1)
-  MP4s\                           # Encoded output from HandBrake
-    Movie Title.mp4               # Ready for upload
+G:\Movies\                                    # Root movies directory (configurable)
+  processing\                                 # Intermediate pipeline stages
+    ripped-for-encoding\                      # MKVs from ripping, awaiting encoding
+      Movie Title.mkv                         # Renamed, ready for HandBrake
+      MOVIE_TITLE-check-title.mkv              # Needs title confirmation
+    encoded-for-upload\                       # MP4s from HandBrake, awaiting upload
+      Movie Title.mp4                         # Ready for upload to Google Drive
+  MKVs\                                       # Archived source MKVs (post-encoding)
+    Movie Title.mkv
+  MP4s\                                       # Archived encoded files (post-upload)
+    Movie Title.mp4
 ```
 
-Files flow through the pipeline: **DVD --> MKVs/ --> (rename) --> TBD/ --> HandBrake --> MP4s/ --> Google Drive**
+Files flow through the pipeline:
+
+**DVD --> `ripped-for-encoding/` --> (rename) --> HandBrake --> `encoded-for-upload/` --> Google Drive + `MP4s/`**
+
+MKVs are archived to `MKVs/` once encoding is confirmed.
 
 ## Features
 
+- **Folder-based queue** -- A file's location represents its processing state.
+  Each loop rescans its input folder, so they can be interrupted and restarted
+  independently without losing track of progress.
 - **Continuous loop** -- Insert a disc, walk away, and come back to a folder full of MKV files.
 - **Multi-drive support** -- Run multiple instances of the script on different drives to rip
   in parallel.
 - **Exponential backoff alerts** -- Plays an audio alert (WAV file) when waiting for a disc,
   with increasing intervals (2s -> 4s -> 8s -> ... up to 5 minutes).
-- **Smart file naming** -- Uses the disc volume label with a timestamp for unique filenames.
-  Falls back to the MKV filename from MakeMKV if the volume label is generic
-  (e.g., `DVD_VIDEO`).
+- **Smart file naming** -- Uses the disc volume label for filenames, falling back to the
+  MKV filename from MakeMKV if the volume label is generic (e.g., `DVD_VIDEO`).
+  All ripped files get a `-check-title` suffix until confirmed.
 - **Progress monitoring** -- Reports file size every 60 seconds while ripping.
 - **Transient disc filtering** -- Detects and ignores brief drive accessibility during
   disc ejection/insertion to avoid false starts.
@@ -84,22 +102,28 @@ Files flow through the pipeline: **DVD --> MKVs/ --> (rename) --> TBD/ --> HandB
 - Windows PowerShell 5.1 or later
 - One or more optical disc drives
 
-## mkv-loop.ps1 Parameters
+## ripping-loop.ps1 Parameters
 
 | Parameter     | Type   | Default                        | Description                              |
 |---------------|--------|--------------------------------|------------------------------------------|
 | `-InputDrive` | String | *(prompted interactively)*     | The drive letter to monitor. Accepts with or without a colon (e.g., `F` or `F:`). If omitted, the script prompts for it with a default of `D`. |
-| `-OutputDir`  | String | *(prompted interactively)*     | Directory where ripped MKV files are saved. If omitted, the script prompts for it with a default of `G:\Movies\MKVs`. |
+| `-MoviesDir`  | String | *(prompted interactively)*     | Root movies directory. Ripped files are saved to `processing\ripped-for-encoding\` under this path. Defaults to `G:\Movies`. |
 
-## check-mp4.ps1 Parameters
+## encode-backlog.ps1 Parameters
 
 | Parameter    | Type   | Default                        | Description                              |
 |--------------|--------|--------------------------------|------------------------------------------|
-| `-OutputDir` | String | *(prompted interactively)*     | Root movies directory containing `MKVs/` and `MP4s/` subfolders. Defaults to `G:\Movies`. |
+| `-MoviesDir` | String | *(prompted interactively)*     | Root movies directory containing `processing/`, `MKVs/`, and `MP4s/` subfolders. Defaults to `G:\Movies`. |
+
+## upload-mp4s.ps1 Parameters
+
+| Parameter    | Type   | Default                        | Description                              |
+|--------------|--------|--------------------------------|------------------------------------------|
+| `-MoviesDir` | String | *(prompted interactively)*     | Root movies directory containing `processing/` and `MP4s/` subfolders. Defaults to `G:\Movies`. |
 
 ## Configuration
 
-The following variables can be modified at the top of `mkv-loop.ps1`:
+The following variables can be modified at the top of `ripping-loop.ps1`:
 
 | Variable          | Default                                           | Description                                      |
 |-------------------|---------------------------------------------------|--------------------------------------------------|

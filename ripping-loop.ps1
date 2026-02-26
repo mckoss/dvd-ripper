@@ -1,6 +1,6 @@
 param (
     [string]$InputDrive,
-    [string]$OutputDir
+    [string]$MoviesDir
 )
 
 $MakeMkvPath = "C:\Program Files (x86)\MakeMKV\makemkvcon64.exe"
@@ -14,13 +14,14 @@ if ([string]::IsNullOrWhiteSpace($InputDrive)) {
 }
 $InputDriveLetter = "$($InputDrive.TrimEnd(':')):"
 
-if ([string]::IsNullOrWhiteSpace($OutputDir)) {
-    $DefaultOutputDir = "G:\Movies\MKVs"
-    $OutputDir = Read-Host "Enter output directory for ripped MKVs (default: $DefaultOutputDir)"
-    if ([string]::IsNullOrWhiteSpace($OutputDir)) {
-        $OutputDir = $DefaultOutputDir
+if ([string]::IsNullOrWhiteSpace($MoviesDir)) {
+    $DefaultMoviesDir = "G:\Movies"
+    $MoviesDir = Read-Host "Enter movies directory (default: $DefaultMoviesDir)"
+    if ([string]::IsNullOrWhiteSpace($MoviesDir)) {
+        $MoviesDir = $DefaultMoviesDir
     }
 }
+$OutputDir = Join-Path $MoviesDir "processing\ripped-for-encoding"
 $MinLength = 3600
 $AlertSoundPath = Join-Path $PSScriptRoot "alert.wav"
 
@@ -36,25 +37,31 @@ if (-not (Test-Path $OutputDir)) {
     New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 }
 
-Write-Host "Starting MakeMKV Automation Loop..."
+Write-Host "Starting Ripping Processing Loop..."
 
 while ($true) {
     Write-Host "`nWaiting for disc insertion in drive $InputDriveLetter..."
 
     # Exponential backoff beep until media is inserted
     $delaySeconds = 2
-    $maxDelaySeconds = 300
+    $maxDelaySeconds = 900
     $timeSinceLastBeep = 0
 
     while ($true) {
         if (Test-Path "$InputDriveLetter\") { break }
 
         if ($timeSinceLastBeep -ge $delaySeconds) {
-            # Play WAV file if it exists, otherwise fall back to system beep
-            if ($null -ne $soundPlayer) {
-                $soundPlayer.PlaySync() # Play the sound synchronously (wait for completion)
-            } else {
-                [System.Media.SystemSounds]::Beep.Play()
+            # Skip alerts during quiet hours (11 PM - 7 AM)
+            $hour = (Get-Date).Hour
+            $isQuietHours = ($hour -ge 23 -or $hour -lt 7)
+
+            if (-not $isQuietHours) {
+                # Play WAV file if it exists, otherwise fall back to system beep
+                if ($null -ne $soundPlayer) {
+                    $soundPlayer.PlaySync() # Play the sound synchronously (wait for completion)
+                } else {
+                    [System.Media.SystemSounds]::Beep.Play()
+                }
             }
             $timeSinceLastBeep = 0
 
@@ -83,12 +90,10 @@ while ($true) {
         if ([string]::IsNullOrWhiteSpace($VolumeName)) { $VolumeName = "UNKNOWN_DISC" }
     }
 
-    # Add timestamp to ensure unique folder names
+    # Use timestamp only for temp folder uniqueness during ripping
     $timestamp = Get-Date -Format "yy-MM-dd-HH-mm"
     $SafeVolumeName = $VolumeName -replace '[\\/:*?"<>|]', '_'
-    $UniqueVolumeName = "$SafeVolumeName-$timestamp"
-    $FinalOutputFile = Join-Path $OutputDir "$UniqueVolumeName.mkv"
-    $TempOutputDir = Join-Path $OutputDir $UniqueVolumeName
+    $TempOutputDir = Join-Path $OutputDir "$SafeVolumeName-$($InputDrive.TrimEnd(':'))-$timestamp"
 
     Write-Host "Disc detected: $VolumeName. Extracting to staging folder..."
 
@@ -148,14 +153,24 @@ while ($true) {
 
         if ($null -ne $trackedMkvFile -and (Test-Path $trackedMkvFile.FullName)) {
             Write-Host "MakeMKV completed successfully."
-            # Use the MKV filename if it's more descriptive than the volume label
+            # Determine best name: prefer MKV filename over generic volume labels
             $mkvBaseName = $trackedMkvFile.BaseName -replace '-[A-Z]\d+_t\d+$', ''  # Strip track suffix like -A5_t00
             $genericLabels = @('UNKNOWN_DISC', 'DVD_VIDEO', 'DVDVOLUME', 'DVD')
-            if ($mkvBaseName.Length -gt 0 -and $genericLabels -contains $VolumeName) {
-                $SafeMkvName = $mkvBaseName -replace '[\\/:*?"<>|]', '_'
-                $FinalOutputFile = Join-Path $OutputDir "$SafeMkvName-$timestamp.mkv"
+            if ($mkvBaseName.Length -gt 0 -and $genericLabels -contains $SafeVolumeName) {
+                $finalName = $mkvBaseName -replace '[\\/:*?"<>|]', '_'
                 Write-Host "Using MKV filename '$mkvBaseName' instead of volume label '$VolumeName'"
+            } else {
+                $finalName = $SafeVolumeName
             }
+
+            # Add -check-title suffix so encoding-loop knows the title hasn't been confirmed
+            $FinalOutputFile = Join-Path $OutputDir "$finalName-check-title.mkv"
+            $counter = 2
+            while (Test-Path $FinalOutputFile) {
+                $FinalOutputFile = Join-Path $OutputDir "$finalName ($counter)-check-title.mkv"
+                $counter++
+            }
+
             Move-Item -Path $trackedMkvFile.FullName -Destination $FinalOutputFile -Force
             Write-Host "Extraction complete. Saved as: $FinalOutputFile"
 
