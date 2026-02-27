@@ -125,8 +125,14 @@ MKVs are archived to `MKVs/` once encoding is confirmed.
   (default path: `C:\Program Files\HandBrake\HandBrake.exe`)
 - [rclone](https://rclone.org/) installed and configured with a `gdrive` remote
   (see [rclone Setup](#rclone-setup) below)
+- [FFmpeg](https://ffmpeg.org/) installed and on PATH (used by `fix-faststart.ps1`)
+- [TMDb API key](#tmdb-api-key-setup) (free — used by `fix-titles.ps1` for movie lookups)
 - Windows PowerShell 5.1 or later
 - One or more optical disc drives
+
+Optional but recommended:
+- [FFmpeg](https://ffmpeg.org/) — `fix-faststart.ps1` uses `ffmpeg` for moov atom
+  fixing; `fix-titles.ps1` uses `ffprobe` for MKV metadata extraction
 
 ## rclone Setup
 
@@ -148,6 +154,32 @@ rclone lsl gdrive:Movies --human-readable
 
 If you want to use a different remote name or destination folder, edit the
 `rclone copy` line near the top of `upload-mp4s.ps1`.
+
+## TMDb API Key Setup
+
+The `fix-titles.ps1` script uses [The Movie Database (TMDb)](https://www.themoviedb.org/)
+API to look up official movie titles and release years. A free API key is required.
+
+1. Create a free account at https://www.themoviedb.org/signup
+2. Go to **Settings > API** (https://www.themoviedb.org/settings/api)
+3. Click **Create** under "Request an API Key" and choose the **Developer** plan (free)
+4. Fill out the form:
+   - **Application Name**: anything (e.g., "DVD Ripper")
+   - **Application URL**: any URL (e.g., `https://github.com`)
+   - **Type of Use**: Desktop Application
+   - **Application Summary**: "Personal script to look up movie titles for renaming local media files"
+5. Submit — your **API Key (v3 auth)** will appear on the API page
+
+When you first run `fix-titles.ps1`, it will prompt for the key and offer to save it
+to `.tmdb-api-key` in the script directory for future runs. You can also pass it
+directly:
+
+```powershell
+.\fix-titles.ps1 -TmdbApiKey "your-key-here"
+```
+
+> **Note:** The `.tmdb-api-key` file is not checked into source control. Keep your
+> key private.
 
 ## ripping-loop.ps1 Parameters
 
