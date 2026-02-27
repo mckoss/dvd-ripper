@@ -494,7 +494,7 @@ while ($keyIndex -lt $sortedKeys.Count) {
                             if ($newResults.Count -gt 0) {
                                 Add-RuntimeToResults -Results $newResults -ApiKey $TmdbApiKey
                                 Show-TmdbResults -Results $newResults -FileDurationMin $ci.FileDuration
-                                $pick = Read-Host '  Choose (1-' + $newResults.Count + ')'
+                                $pick = Read-Host ('  Choose (1-' + $newResults.Count + ')')
                                 if ($pick -match '^\d+$') {
                                     $pIdx = [int]$pick - 1
                                     if ($pIdx -ge 0 -and $pIdx -lt $newResults.Count) {
