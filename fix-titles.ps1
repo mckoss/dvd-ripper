@@ -205,10 +205,10 @@ function Get-YearFromResult {
     return '????'
 }
 
-# ── Phase 1: Scan MKVs and find matching MP4s ────────────────────────────────
+# ── Phase 1: Scan MKVs and MP4s, group by base name ──────────────────────────
 
 Write-Host ''
-Write-Host 'Scanning for MKV files...' -ForegroundColor Cyan
+Write-Host 'Scanning for movie files...' -ForegroundColor Cyan
 $dirList = $mkvDirs -join ', '
 Write-Host "  MKV locations: $dirList" -ForegroundColor Gray
 $dirList = $mp4Dirs -join ', '
@@ -219,14 +219,20 @@ foreach ($dir in $mkvDirs) {
     $allMkvs += Get-ChildItem -Path $dir -Filter *.mkv -File
 }
 
-if ($allMkvs.Count -eq 0) {
-    Write-Host 'No MKV files found.' -ForegroundColor Yellow
+$allMp4s = @()
+foreach ($dir in $mp4Dirs) {
+    $allMp4s += Get-ChildItem -Path $dir -Filter *.mp4 -File
+}
+
+if ($allMkvs.Count -eq 0 -and $allMp4s.Count -eq 0) {
+    Write-Host 'No MKV or MP4 files found.' -ForegroundColor Yellow
     exit 0
 }
 
 $fileGroups = @{}
 $mp4Warnings = [System.Collections.Generic.List[string]]::new()
 
+# Add MKVs first, then find matching MP4s
 foreach ($mkv in $allMkvs) {
     $base = $mkv.BaseName
     if ($fileGroups.ContainsKey($base)) { continue }
@@ -250,10 +256,23 @@ foreach ($mkv in $allMkvs) {
     }
 }
 
-$mkvCount = $fileGroups.Count
-$dirCount = $mkvDirs.Count
+# Add orphan MP4s (no matching MKV)
+$orphanMp4Count = 0
+foreach ($mp4 in $allMp4s) {
+    $base = $mp4.BaseName
+    if ($fileGroups.ContainsKey($base)) { continue }
+
+    $fileGroups[$base] = @{
+        mkv = $null
+        mp4 = $mp4
+    }
+    $orphanMp4Count++
+}
+
+$totalCount = $fileGroups.Count
+$mkvCount = ($fileGroups.Values | Where-Object { $_.mkv }) | Measure-Object | Select-Object -ExpandProperty Count
 Write-Host ''
-Write-Host "Found $mkvCount MKV title(s) across $dirCount folder(s)."
+Write-Host "Found $totalCount title(s): $mkvCount with MKV, $orphanMp4Count MP4-only."
 if ($mp4Warnings.Count -gt 0) {
     $warnCount = $mp4Warnings.Count
     Write-Host ''
@@ -292,8 +311,10 @@ function Rename-MovieFile {
 function Rename-MovieGroup {
     param($Group, [string]$NewBase)
     $anyFail = $false
-    $res = Rename-MovieFile -File $Group.mkv -NewBase $NewBase
-    if ($res -eq 'fail') { $anyFail = $true }
+    if ($Group.mkv) {
+        $res = Rename-MovieFile -File $Group.mkv -NewBase $NewBase
+        if ($res -eq 'fail') { $anyFail = $true }
+    }
     if ($Group.mp4) {
         $res = Rename-MovieFile -File $Group.mp4 -NewBase $NewBase
         if ($res -eq 'fail') { $anyFail = $true }
@@ -311,7 +332,8 @@ function Get-MovieSearchResults {
         }
     }
 
-    $fileDuration = Get-FileDurationMinutes -FilePath $Group.mkv.FullName
+    $primaryFile = if ($Group.mkv) { $Group.mkv.FullName } else { $Group.mp4.FullName }
+    $fileDuration = Get-FileDurationMinutes -FilePath $primaryFile
     if ($fileDuration) {
         $durStr = Format-Duration $fileDuration
         Write-Host "  File duration: $durStr" -ForegroundColor Gray
@@ -342,14 +364,19 @@ function Get-MovieSearchResults {
 function Show-MovieHeader {
     param($Group, [string]$BaseName)
     Write-Host '-------------------------------------------------------------' -ForegroundColor DarkGray
-    $mkvName = $Group.mkv.Name
-    $mkvDir = $Group.mkv.DirectoryName
-    Write-Host "  MKV: $mkvName" -ForegroundColor White
-    Write-Host "       $mkvDir" -ForegroundColor DarkGray
+    if ($Group.mkv) {
+        $mkvName = $Group.mkv.Name
+        $mkvDir = $Group.mkv.DirectoryName
+        Write-Host "  MKV: $mkvName" -ForegroundColor White
+        Write-Host "       $mkvDir" -ForegroundColor DarkGray
+    } else {
+        Write-Host '  MKV: NOT FOUND (MP4-only)' -ForegroundColor Yellow
+    }
     if ($Group.mp4) {
         $mp4Name = $Group.mp4.Name
         $mp4Dir = $Group.mp4.DirectoryName
-        Write-Host "  MP4: $mp4Name ($mp4Dir)" -ForegroundColor Gray
+        Write-Host "  MP4: $mp4Name" -ForegroundColor White
+        Write-Host "       $mp4Dir" -ForegroundColor DarkGray
     } else {
         Write-Host '  MP4: NOT FOUND (only MKV will be renamed)' -ForegroundColor Yellow
     }
@@ -458,12 +485,14 @@ while ($keyIndex -lt $sortedKeys.Count) {
 
                         # Undo previous rename if it happened
                         if ($ci.NewBase) {
-                            $oldMkvName = $ci.BaseName + '.mkv'
-                            $newMkvName = $ci.NewBase + '.mkv'
-                            $newMkvPath = Join-Path $ci.Group.mkv.DirectoryName $newMkvName
-                            if (Test-Path $newMkvPath) {
-                                Rename-Item -Path $newMkvPath -NewName $oldMkvName -ErrorAction SilentlyContinue
-                                Write-Host "  Reverted: $newMkvName -> $oldMkvName" -ForegroundColor Yellow
+                            if ($ci.Group.mkv) {
+                                $oldMkvName = $ci.BaseName + '.mkv'
+                                $newMkvName = $ci.NewBase + '.mkv'
+                                $newMkvPath = Join-Path $ci.Group.mkv.DirectoryName $newMkvName
+                                if (Test-Path $newMkvPath) {
+                                    Rename-Item -Path $newMkvPath -NewName $oldMkvName -ErrorAction SilentlyContinue
+                                    Write-Host "  Reverted: $newMkvName -> $oldMkvName" -ForegroundColor Yellow
+                                }
                             }
                             if ($ci.Group.mp4) {
                                 $oldMp4Name = $ci.BaseName + '.mp4'
