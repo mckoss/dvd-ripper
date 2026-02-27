@@ -13,11 +13,10 @@ simply rescans its input folder to pick up where it left off.
    `.\ripping-loop.ps1`. Each instance monitors one drive, rips the disc, ejects it,
    and plays an alert sound so you know to insert the next one. Just keep feeding discs.
 
-2. **Confirm titles** — DVD discs don't carry reliable movie titles, so ripped files
-   land with a `-check-title` suffix (e.g., `GRAVITY-check-title.mkv`). Browse to
-   `processing\ripped-for-encoding\` and rename each file — correct the title if needed
-   and remove the `-check-title` suffix (e.g., `Gravity.mkv`). This is the only manual
-   step in the pipeline.
+2. **Fix titles** — Run `.\fix-titles.ps1` to rename MKV and MP4 files to
+   proper `Title (Year)` format using TMDb lookups. The script searches TMDb,
+   shows the top matches with runtimes and vote counts, and lets you confirm
+   or correct each one. Use batch mode (`B`) to process 10 at a time.
 
 3. **Encode** — Run `.\encode-backlog.ps1` whenever you're ready. It shows which files
    need encoding, archives already-encoded MKVs, and launches HandBrake pointed at
@@ -75,6 +74,64 @@ moves MP4s to the `MP4s/` archive.
 .\upload-mp4s.ps1 -MoviesDir "G:\Movies"       # non-interactive
 ```
 
+Use `-Archive` to upload directly from the `MP4s/` archive folder. This is useful
+after renaming files with `fix-titles.ps1` — it checks the remote for exact filename
+matches and only uploads files that don't already exist.
+
+```powershell
+.\upload-mp4s.ps1 -Archive                     # upload renamed files from MP4s/
+```
+
+### Utility Scripts
+
+#### Fix Titles (`fix-titles.ps1`)
+
+Renames MKV and MP4 files to `Title (Year)` format using TMDb lookups. Scans
+`MKVs/` and `MP4s/` folders, extracts metadata titles via ffprobe, searches TMDb,
+and displays the top 5 matches sorted by exact title match and vote count. Each
+result shows runtime and vote count for easy comparison.
+
+Files already in `Title (Year)` format are skipped automatically on re-runs.
+MP4-only files (no matching MKV) are also supported.
+
+```powershell
+.\fix-titles.ps1                               # prompted for movies dir and API key
+.\fix-titles.ps1 -MoviesDir "G:\Movies"        # non-interactive (key from .tmdb-api-key)
+```
+
+Prompt options per movie:
+- **1–5** — Select a TMDb result (default is `1`, press Enter to accept)
+- **S** — Skip this movie
+- **C** — Custom search (re-query TMDb with different terms)
+- **M** — Manual entry (type title and year directly)
+- **B** — Batch mode: auto-select #1 for the next 10 movies, then review
+- **Q** — Quit and show summary
+
+In batch mode, after processing 10 movies you get a numbered review list. Type a
+number to correct any movie (reverts the rename and lets you re-pick), `B` for the
+next batch, `S` to return to single mode, or `Q` to quit.
+
+#### Fix Faststart (`fix-faststart.ps1`)
+
+Checks MP4 files in `MP4s/` and `encoded-for-upload/` for moov atom placement.
+Files with the moov atom after mdat (non-faststart) are re-muxed in place using
+`ffmpeg -movflags +faststart`. Faststart placement is required for smooth streaming.
+
+```powershell
+.\fix-faststart.ps1                            # prompted for movies directory
+.\fix-faststart.ps1 -MoviesDir "G:\Movies"     # non-interactive
+```
+
+#### Delete If Backed Up (`delete-if-backedup.ps1`)
+
+Compares files in a source folder against a backup folder. Lists files that exist
+in both locations with matching sizes, then offers to delete them from the source.
+Useful for cleaning up local copies after confirming they've been backed up.
+
+```powershell
+.\delete-if-backedup.ps1 -Source "G:\Movies\MP4s" -Backup "D:\Backup\MP4s"
+```
+
 ## Directory Structure
 
 ```
@@ -125,14 +182,12 @@ MKVs are archived to `MKVs/` once encoding is confirmed.
   (default path: `C:\Program Files\HandBrake\HandBrake.exe`)
 - [rclone](https://rclone.org/) installed and configured with a `gdrive` remote
   (see [rclone Setup](#rclone-setup) below)
-- [FFmpeg](https://ffmpeg.org/) installed and on PATH (used by `fix-faststart.ps1`)
+- [FFmpeg](https://ffmpeg.org/) installed and on PATH — `fix-faststart.ps1` uses
+  `ffmpeg` for moov atom fixing; `fix-titles.ps1` uses `ffprobe` for metadata
+  extraction and runtime detection
 - [TMDb API key](#tmdb-api-key-setup) (free — used by `fix-titles.ps1` for movie lookups)
 - Windows PowerShell 5.1 or later
 - One or more optical disc drives
-
-Optional but recommended:
-- [FFmpeg](https://ffmpeg.org/) — `fix-faststart.ps1` uses `ffmpeg` for moov atom
-  fixing; `fix-titles.ps1` uses `ffprobe` for MKV metadata extraction
 
 ## rclone Setup
 
@@ -199,6 +254,27 @@ directly:
 | Parameter    | Type   | Default                        | Description                              |
 |--------------|--------|--------------------------------|------------------------------------------|
 | `-MoviesDir` | String | *(prompted interactively)*     | Root movies directory containing `processing/` and `MP4s/` subfolders. Defaults to `G:\Movies`. |
+| `-Archive`   | Switch | Off                            | Upload from the `MP4s/` archive folder instead of `encoded-for-upload/`. Checks the remote for exact filename matches and skips files that already exist. Does not move any local files after upload. |
+
+## fix-titles.ps1 Parameters
+
+| Parameter      | Type   | Default                        | Description                              |
+|----------------|--------|--------------------------------|------------------------------------------|
+| `-MoviesDir`   | String | *(prompted interactively)*     | Root movies directory containing `MKVs/` and `MP4s/` subfolders. Defaults to `G:\Movies`. |
+| `-TmdbApiKey`  | String | *(from `.tmdb-api-key` file)*  | TMDb v3 API key. If omitted, reads from `.tmdb-api-key` in the script directory, or prompts to enter and save one. |
+
+## fix-faststart.ps1 Parameters
+
+| Parameter    | Type   | Default                        | Description                              |
+|--------------|--------|--------------------------------|------------------------------------------|
+| `-MoviesDir` | String | *(prompted interactively)*     | Root movies directory containing `MP4s/` and `processing/encoded-for-upload/` subfolders. Defaults to `G:\Movies`. |
+
+## delete-if-backedup.ps1 Parameters
+
+| Parameter  | Type   | Default                        | Description                              |
+|------------|--------|--------------------------------|------------------------------------------|
+| `-Source`  | String | *(prompted interactively)*     | Folder containing files to check and potentially delete. |
+| `-Backup`  | String | *(prompted interactively)*     | Folder to verify files exist in (with matching sizes) before allowing deletion. |
 
 ## Configuration
 
