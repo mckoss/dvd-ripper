@@ -2,6 +2,8 @@ param (
     [string]$MoviesDir
 )
 
+. "$PSScriptRoot\tmdb-helpers.ps1"
+
 if ([string]::IsNullOrWhiteSpace($MoviesDir)) {
     $DefaultMoviesDir = "G:\Movies"
     $MoviesDir = Read-Host "Enter movies directory (default: $DefaultMoviesDir)"
@@ -26,14 +28,59 @@ foreach ($dir in @($EncodedDir, $MkvArchiveDir, $Mp4ArchiveDir)) {
     }
 }
 
-# Step 1: Check for MKV files that still need title confirmation (ending in -check-title)
-$needsRenaming = Get-ChildItem -Path $RippedDir -Filter *-check-title.mkv
+# Step 1: Rename -check-title MKVs using TMDb lookup
+$needsRenaming = @(Get-ChildItem -Path $RippedDir -Filter *-check-title.mkv)
 
 if ($needsRenaming.Count -gt 0) {
-    Write-Host "The following MKV files need their title confirmed."
-    Write-Host "Remove the '-check-title' suffix (and correct the name if needed) before proceeding:`n"
+    Write-Host "$($needsRenaming.Count) MKV(s) need title confirmation:" -ForegroundColor Cyan
+    $needsRenaming | ForEach-Object { Write-Host "  $($_.Name)" -ForegroundColor Gray }
+    Write-Host ''
+
+    $TmdbApiKey = Initialize-TmdbApiKey
+    $titleRenamed = 0
+    $titleSkipped = 0
+
+    foreach ($mkv in $needsRenaming) {
+        # Strip -check-title suffix to get raw disc title
+        $rawBase = $mkv.BaseName -replace '-check-title$', ''
+        Write-Host '-------------------------------------------------------------' -ForegroundColor DarkGray
+        Write-Host "  File: $($mkv.Name)" -ForegroundColor White
+        Write-Host "       $($mkv.DirectoryName)" -ForegroundColor DarkGray
+
+        $result = Invoke-TmdbRenamePrompt -FilePath $mkv.FullName -RawBaseName $rawBase -ApiKey $TmdbApiKey
+
+        if ($result.NewBase) {
+            $newName = $result.NewBase + '.mkv'
+            $newPath = Join-Path $mkv.DirectoryName $newName
+            if (Test-Path $newPath) {
+                Write-Host "  SKIPPED (target exists): $newName" -ForegroundColor Yellow
+                $titleSkipped++
+            } else {
+                Rename-Item -Path $mkv.FullName -NewName $newName -ErrorAction Stop
+                Write-Host "  Renamed: $($mkv.Name) -> $newName" -ForegroundColor Green
+                $titleRenamed++
+            }
+        } else {
+            Write-Host '  Skipped. Rename this file manually and re-run.' -ForegroundColor Yellow
+            $titleSkipped++
+        }
+        Write-Host ''
+    }
+
+    Write-Host ''
+    Write-Host "Title confirmation: $titleRenamed renamed, $titleSkipped skipped." -ForegroundColor Cyan
+    if ($titleSkipped -gt 0) {
+        Write-Host "  $titleSkipped file(s) still need manual renaming before encoding." -ForegroundColor Yellow
+    }
+    Write-Host ''
+}
+
+# Re-scan after renaming (files may have new names now)
+$needsRenaming = @(Get-ChildItem -Path $RippedDir -Filter *-check-title.mkv)
+if ($needsRenaming.Count -gt 0) {
+    Write-Host "$($needsRenaming.Count) file(s) still have -check-title suffix:" -ForegroundColor Yellow
     $needsRenaming | ForEach-Object { Write-Host "  $($_.Name)" }
-    exit 1
+    Write-Host "Remove the suffix manually before encoding.`n" -ForegroundColor Yellow
 }
 
 # Step 2: Check for MKVs that already have a corresponding MP4 in encoded-for-upload or MP4s archive

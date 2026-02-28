@@ -5,6 +5,9 @@ param (
 
 $MakeMkvPath = "C:\Program Files (x86)\MakeMKV\makemkvcon64.exe"
 
+. "$PSScriptRoot\tmdb-helpers.ps1"
+$TmdbApiKey = Initialize-TmdbApiKey
+
 if ([string]::IsNullOrWhiteSpace($InputDrive)) {
     $DefaultDrive = "D"
     $InputDrive = Read-Host "Enter input drive letter (default: $DefaultDrive)"
@@ -38,17 +41,55 @@ if (-not (Test-Path $OutputDir)) {
 }
 
 Write-Host "Starting Ripping Processing Loop..."
+$lastRippedFile = $null
 
 while ($true) {
-    Write-Host "`nWaiting for disc insertion in drive $InputDriveLetter..."
+    if ($lastRippedFile) {
+        Write-Host "`nWaiting for disc in drive $InputDriveLetter... (press SPACE to confirm title of last rip)" -ForegroundColor Cyan
+    } else {
+        Write-Host "`nWaiting for disc insertion in drive $InputDriveLetter..."
+    }
 
     # Exponential backoff beep until media is inserted
     $delaySeconds = 2
     $maxDelaySeconds = 900
     $timeSinceLastBeep = 0
 
+    # Flush any buffered keystrokes
+    while ([Console]::KeyAvailable) { [Console]::ReadKey($true) | Out-Null }
+
     while ($true) {
         if (Test-Path "$InputDriveLetter\") { break }
+
+        # Check for SPACE to rename the last ripped file
+        if ($lastRippedFile -and [Console]::KeyAvailable) {
+            $key = [Console]::ReadKey($true)
+            if ($key.Key -eq 'Spacebar') {
+                Write-Host ''
+                $rawBase = [System.IO.Path]::GetFileNameWithoutExtension($lastRippedFile) -replace '-check-title$', ''
+                Write-Host '-------------------------------------------------------------' -ForegroundColor DarkGray
+                Write-Host "  File: $([System.IO.Path]::GetFileName($lastRippedFile))" -ForegroundColor White
+                Write-Host "       $([System.IO.Path]::GetDirectoryName($lastRippedFile))" -ForegroundColor DarkGray
+
+                $tmdbResult = Invoke-TmdbRenamePrompt -FilePath $lastRippedFile -RawBaseName $rawBase -ApiKey $TmdbApiKey
+
+                if ($tmdbResult.NewBase) {
+                    $newName = $tmdbResult.NewBase + '.mkv'
+                    $newPath = Join-Path $OutputDir $newName
+                    if (Test-Path $newPath) {
+                        Write-Host "  SKIPPED (target exists): $newName" -ForegroundColor Yellow
+                    } else {
+                        Rename-Item -Path $lastRippedFile -NewName $newName -ErrorAction Stop
+                        Write-Host "  Renamed: $([System.IO.Path]::GetFileName($lastRippedFile)) -> $newName" -ForegroundColor Green
+                    }
+                } else {
+                    Write-Host '  Skipped. Title can be confirmed later via encode-backlog.' -ForegroundColor Yellow
+                }
+                $lastRippedFile = $null
+                Write-Host ''
+                Write-Host "Waiting for disc insertion in drive $InputDriveLetter..."
+            }
+        }
 
         if ($timeSinceLastBeep -ge $delaySeconds) {
             # Skip alerts during quiet hours (11 PM - 7 AM)
@@ -188,6 +229,7 @@ while ($true) {
 
             Move-Item -Path $trackedMkvFile.FullName -Destination $FinalOutputFile -Force
             Write-Host "Extraction complete. Saved as: $FinalOutputFile"
+            $lastRippedFile = $FinalOutputFile
 
             # Only delete temp directory if it's empty
             if (Test-Path $TempOutputDir) {
