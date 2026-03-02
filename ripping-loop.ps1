@@ -28,6 +28,24 @@ $OutputDir = Join-Path $MoviesDir "processing\ripped-for-encoding"
 $MinLength = 3600
 $AlertSoundPath = Join-Path $PSScriptRoot "alert.wav"
 
+# Resolve drive letter to MakeMKV disc index to avoid scanning all drives
+$DiscIndex = $null
+Write-Host "Resolving disc index for drive $InputDriveLetter..."
+$infoOutput = & $MakeMkvPath -r info disc:9999 2>&1 | Out-String
+foreach ($line in $infoOutput -split "`n") {
+    # Lines like: DRV:0,2,999,12,"BD-RE HL-DT-ST","/dev/sr0","DISC_LABEL"
+    # On Windows the device field contains the drive letter like "D:"
+    if ($line -match '^DRV:(\d+),\d+,\d+,\d+,' -and $line -match [regex]::Escape($InputDriveLetter.TrimEnd(':'))) {
+        $DiscIndex = $Matches[1]
+        break
+    }
+}
+if ($null -ne $DiscIndex) {
+    Write-Host "Mapped $InputDriveLetter to disc:$DiscIndex" -ForegroundColor Green
+} else {
+    Write-Host "Could not resolve disc index. Falling back to dev:$InputDriveLetter" -ForegroundColor Yellow
+}
+
 # Create a single sound player instance to reuse
 $soundPlayer = $null
 if (Test-Path $AlertSoundPath) {
@@ -138,11 +156,12 @@ while ($true) {
 
     Write-Host "Disc detected: $VolumeName. Extracting to staging folder..."
 
-    # Execute MakeMKV asynchronously using dev: to target specific drive
+    # Execute MakeMKV targeting specific drive
     if (-not (Test-Path $TempOutputDir)) {
         New-Item -ItemType Directory -Path $TempOutputDir -Force | Out-Null
     }
-    $ArgumentList = "mkv dev:$InputDriveLetter all `"$TempOutputDir`" --minlength=$MinLength"
+    $driveArg = if ($null -ne $DiscIndex) { "disc:$DiscIndex" } else { "dev:$InputDriveLetter" }
+    $ArgumentList = "mkv $driveArg all `"$TempOutputDir`" --minlength=$MinLength"
     $process = Start-Process -FilePath $MakeMkvPath -ArgumentList $ArgumentList -NoNewWindow -PassThru
 
     Write-Host "Extraction started. Monitoring file size..."
@@ -161,7 +180,7 @@ while ($true) {
                 $mkvFile = Get-ChildItem -Path $TempOutputDir -Filter *.mkv | Sort-Object Length -Descending | Select-Object -First 1
                 if ($mkvFile) {
                     $trackedMkvFile = $mkvFile
-                    Write-Host "Detected MKV file: $($trackedMkvFile.Name)"
+                    Write-Host "[$InputDriveLetter] Detected MKV file: $($trackedMkvFile.Name)"
                 }
             }
 
@@ -170,7 +189,7 @@ while ($true) {
                 # Refresh the file info to get current size
                 $trackedMkvFile.Refresh()
                 $sizeMB = [math]::Round($trackedMkvFile.Length / 1MB, 2)
-                Write-Host "Progress: $sizeMB MB written..."
+                Write-Host "[$InputDriveLetter] Progress: $sizeMB MB written..."
             }
             $progressCounter = 0
         }
@@ -188,7 +207,7 @@ while ($true) {
         if ($mkvFiles.Count -eq 0) {
             Write-Host "No titles found over $([math]::Round($MinLength / 60)) minutes. Retrying with no minimum length to get the longest title..."
             $shortTitleWarning = $true
-            $ArgumentList = "mkv dev:$InputDriveLetter all `"$TempOutputDir`" --minlength=0"
+            $ArgumentList = "mkv $driveArg all `"$TempOutputDir`" --minlength=0"
             $process = Start-Process -FilePath $MakeMkvPath -ArgumentList $ArgumentList -NoNewWindow -PassThru
             $process.WaitForExit()
         }
