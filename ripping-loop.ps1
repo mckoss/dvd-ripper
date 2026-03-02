@@ -220,14 +220,25 @@ while ($true) {
                 Write-Host "WARNING: No title over $([math]::Round($MinLength / 60)) min found. Kept longest title ($sizeMB MB): $($trackedMkvFile.Name)" -ForegroundColor Yellow
             }
             Write-Host "MakeMKV completed successfully."
-            # Determine best name: prefer MKV filename over generic volume labels
+            # Determine best name: metadata title > MKV filename > volume label
+            $metaTitle = Get-MkvTitle -FilePath $trackedMkvFile.FullName
             $mkvBaseName = $trackedMkvFile.BaseName -replace '-[A-Z]\d+_t\d+$', ''  # Strip track suffix like -A5_t00
             $genericLabels = @('UNKNOWN_DISC', 'DVD_VIDEO', 'DVDVOLUME', 'DVD')
-            if ($mkvBaseName.Length -gt 0 -and $genericLabels -contains $SafeVolumeName) {
+            $genericFilenames = @{ }  # basenames that are just track IDs like A1_t00, title_t01
+            $isGenericFilename = $mkvBaseName -match '^[A-Z]\d+_t\d+$' -or $mkvBaseName -match '^title_t\d+$'
+            $isGenericVolume = $genericLabels -contains $SafeVolumeName
+
+            if ($metaTitle) {
+                $finalName = $metaTitle -replace '[\\/:*?"<>|]', '_'
+                Write-Host "Using metadata title: $metaTitle" -ForegroundColor Cyan
+            } elseif (-not $isGenericFilename -and $isGenericVolume) {
                 $finalName = $mkvBaseName -replace '[\\/:*?"<>|]', '_'
                 Write-Host "Using MKV filename '$mkvBaseName' instead of volume label '$VolumeName'"
             } else {
                 $finalName = $SafeVolumeName
+                if ($isGenericVolume) {
+                    Write-Host "WARNING: No metadata title, generic volume label and filename." -ForegroundColor Yellow
+                }
             }
 
             # Add -check-title suffix so encoding-loop knows the title hasn't been confirmed
