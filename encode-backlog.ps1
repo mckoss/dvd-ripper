@@ -83,6 +83,53 @@ if ($needsRenaming.Count -gt 0) {
     Write-Host "Remove the suffix manually before encoding.`n" -ForegroundColor Yellow
 }
 
+# Step 1b: Catch MKVs missing a (Year) in the filename
+$missingYear = @(Get-ChildItem -Path $RippedDir -Filter *.mkv | Where-Object {
+    $_.BaseName -notmatch '\(\d{4}\)' -and $_.BaseName -notmatch '-check-title$'
+})
+
+if ($missingYear.Count -gt 0) {
+    Write-Host "$($missingYear.Count) MKV(s) missing year - need title confirmation:" -ForegroundColor Cyan
+    $missingYear | ForEach-Object { Write-Host "  $($_.Name)" -ForegroundColor Gray }
+    Write-Host ''
+
+    if (-not $TmdbApiKey) { $TmdbApiKey = Initialize-TmdbApiKey }
+    if (-not $titleRenamed) { $titleRenamed = 0 }
+    if (-not $titleSkipped) { $titleSkipped = 0 }
+
+    foreach ($mkv in $missingYear) {
+        Write-Host '-------------------------------------------------------------' -ForegroundColor DarkGray
+        Write-Host "  File: $($mkv.Name)" -ForegroundColor White
+        Write-Host "       $($mkv.DirectoryName)" -ForegroundColor DarkGray
+
+        $result = Invoke-TmdbRenamePrompt -FilePath $mkv.FullName -RawBaseName $mkv.BaseName -ApiKey $TmdbApiKey
+
+        if ($result.NewBase) {
+            $newName = $result.NewBase + '.mkv'
+            $newPath = Join-Path $mkv.DirectoryName $newName
+            if (Test-Path $newPath) {
+                Write-Host "  SKIPPED (target exists): $newName" -ForegroundColor Yellow
+                $titleSkipped++
+            } else {
+                Rename-Item -Path $mkv.FullName -NewName $newName -ErrorAction Stop
+                Write-Host "  Renamed: $($mkv.Name) -> $newName" -ForegroundColor Green
+                $titleRenamed++
+            }
+        } else {
+            Write-Host '  Skipped. Rename this file manually and re-run.' -ForegroundColor Yellow
+            $titleSkipped++
+        }
+        Write-Host ''
+    }
+
+    Write-Host ''
+    Write-Host "Title confirmation: $titleRenamed renamed, $titleSkipped skipped." -ForegroundColor Cyan
+    if ($titleSkipped -gt 0) {
+        Write-Host "  $titleSkipped file(s) still need manual renaming before encoding." -ForegroundColor Yellow
+    }
+    Write-Host ''
+}
+
 # Step 2: Check for MKVs that already have a corresponding MP4 in encoded-for-upload or MP4s archive
 $existingMp4Titles = @()
 if (Test-Path $EncodedDir) {
