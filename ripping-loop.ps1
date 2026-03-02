@@ -28,22 +28,19 @@ $OutputDir = Join-Path $MoviesDir "processing\ripped-for-encoding"
 $MinLength = 3600
 $AlertSoundPath = Join-Path $PSScriptRoot "alert.wav"
 
-# Resolve drive letter to MakeMKV disc index to avoid scanning all drives
+# Resolve drive letter to MakeMKV disc index using WMI (avoids scanning all drives)
 $DiscIndex = $null
-Write-Host "Resolving disc index for drive $InputDriveLetter..."
-$infoOutput = & $MakeMkvPath -r info disc:9999 2>&1 | Out-String
-foreach ($line in $infoOutput -split "`n") {
-    # Lines like: DRV:0,2,999,12,"BD-RE HL-DT-ST","/dev/sr0","DISC_LABEL"
-    # On Windows the device field contains the drive letter like "D:"
-    if ($line -match '^DRV:(\d+),\d+,\d+,\d+,' -and $line -match [regex]::Escape($InputDriveLetter.TrimEnd(':'))) {
-        $DiscIndex = $Matches[1]
+$opticalDrives = @(Get-CimInstance Win32_CDROMDrive | Sort-Object DeviceID)
+for ($i = 0; $i -lt $opticalDrives.Count; $i++) {
+    if ($opticalDrives[$i].Drive -eq $InputDriveLetter) {
+        $DiscIndex = $i
         break
     }
 }
 if ($null -ne $DiscIndex) {
-    Write-Host "Mapped $InputDriveLetter to disc:$DiscIndex" -ForegroundColor Green
+    Write-Host "Mapped $InputDriveLetter to disc:$DiscIndex (out of $($opticalDrives.Count) optical drive(s))" -ForegroundColor Green
 } else {
-    Write-Host "Could not resolve disc index. Falling back to dev:$InputDriveLetter" -ForegroundColor Yellow
+    Write-Host "Could not resolve disc index for $InputDriveLetter. Falling back to dev:$InputDriveLetter" -ForegroundColor Yellow
 }
 
 # Create a single sound player instance to reuse
