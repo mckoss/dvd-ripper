@@ -1,6 +1,7 @@
 param (
     [string]$InputDrive,
-    [string]$MoviesDir
+    [string]$MoviesDir,
+    [int]$DiscIndex = -1
 )
 
 $MakeMkvPath = "C:\Program Files (x86)\MakeMKV\makemkvcon64.exe"
@@ -28,19 +29,13 @@ $OutputDir = Join-Path $MoviesDir "processing\ripped-for-encoding"
 $MinLength = 3600
 $AlertSoundPath = Join-Path $PSScriptRoot "alert.wav"
 
-# Resolve drive letter to MakeMKV disc index using WMI (avoids scanning all drives)
-$DiscIndex = $null
-$opticalDrives = @(Get-CimInstance Win32_CDROMDrive | Sort-Object DeviceID)
-for ($i = 0; $i -lt $opticalDrives.Count; $i++) {
-    if ($opticalDrives[$i].Drive -eq $InputDriveLetter) {
-        $DiscIndex = $i
-        break
-    }
-}
-if ($null -ne $DiscIndex) {
-    Write-Host "Mapped $InputDriveLetter to disc:$DiscIndex (out of $($opticalDrives.Count) optical drive(s))" -ForegroundColor Green
+# Build MakeMKV drive argument: disc:N if provided, otherwise dev:X:
+if ($DiscIndex -ge 0) {
+    $driveArg = "disc:$DiscIndex"
+    Write-Host "Using $driveArg for drive $InputDriveLetter" -ForegroundColor Green
 } else {
-    Write-Host "Could not resolve disc index for $InputDriveLetter. Falling back to dev:$InputDriveLetter" -ForegroundColor Yellow
+    $driveArg = "dev:$InputDriveLetter"
+    Write-Host "Using $driveArg (pass -DiscIndex N to use disc:N instead)" -ForegroundColor DarkGray
 }
 
 # Create a single sound player instance to reuse
@@ -157,7 +152,6 @@ while ($true) {
     if (-not (Test-Path $TempOutputDir)) {
         New-Item -ItemType Directory -Path $TempOutputDir -Force | Out-Null
     }
-    $driveArg = if ($null -ne $DiscIndex) { "disc:$DiscIndex" } else { "dev:$InputDriveLetter" }
     $ArgumentList = "mkv $driveArg all `"$TempOutputDir`" --minlength=$MinLength"
     $process = Start-Process -FilePath $MakeMkvPath -ArgumentList $ArgumentList -NoNewWindow -PassThru
 
