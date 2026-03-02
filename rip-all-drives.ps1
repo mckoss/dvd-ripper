@@ -2,8 +2,6 @@ param (
     [string]$MoviesDir
 )
 
-$MakeMkvPath = "C:\Program Files (x86)\MakeMKV\makemkvcon64.exe"
-
 if ([string]::IsNullOrWhiteSpace($MoviesDir)) {
     $DefaultMoviesDir = "G:\Movies"
     $MoviesDir = Read-Host "Enter movies directory (default: $DefaultMoviesDir)"
@@ -12,40 +10,24 @@ if ([string]::IsNullOrWhiteSpace($MoviesDir)) {
     }
 }
 
-# Enumerate disc indices via MakeMKV (one-time scan before any ripping starts)
+# Enumerate optical drives via Windows API (works regardless of disc insertion)
 Write-Host 'Scanning for optical drives...' -ForegroundColor Cyan
-$infoOutput = & $MakeMkvPath -r info disc:9999 2>&1 | Out-String
+$cdroms = @(Get-CimInstance Win32_CDROMDrive | Sort-Object DeviceID)
 
-$drives = @()
-foreach ($line in $infoOutput -split "`n") {
-    # DRV lines: DRV:index,visible,unknown,unknown,"Name","DevicePath","DiscLabel"
-    # On Windows DevicePath is like \Device\CdRom0 — drive letter comes from the OS
-    if ($line -match '^DRV:(\d+),(\d+),') {
-        $idx = [int]$Matches[1]
-        $visible = [int]$Matches[2]
-        if ($visible -gt 0) {
-            $drives += @{ Index = $idx; Line = $line.Trim() }
-        }
-    }
-}
-
-if ($drives.Count -eq 0) {
+if ($cdroms.Count -eq 0) {
     Write-Host 'No optical drives found.' -ForegroundColor Red
     exit 1
 }
 
-# Map disc indices to drive letters using Win32_CDROMDrive (sorted by DeviceID to match MakeMKV order)
-$cdroms = @(Get-CimInstance Win32_CDROMDrive | Sort-Object DeviceID)
+$drives = @()
+for ($i = 0; $i -lt $cdroms.Count; $i++) {
+    $drives += @{ Index = $i; Letter = $cdroms[$i].Drive; Name = $cdroms[$i].Name }
+}
 
 Write-Host ''
 Write-Host "Found $($drives.Count) optical drive(s):" -ForegroundColor Green
 foreach ($d in $drives) {
-    $letter = '??'
-    if ($d.Index -lt $cdroms.Count) {
-        $letter = $cdroms[$d.Index].Drive
-    }
-    $d.Letter = $letter
-    Write-Host "  disc:$($d.Index) = $letter" -ForegroundColor White
+    Write-Host "  disc:$($d.Index) = $($d.Letter)  ($($d.Name))" -ForegroundColor White
 }
 Write-Host ''
 
@@ -63,18 +45,36 @@ if ([string]::IsNullOrWhiteSpace($response) -or $response -match '^[Yy]$') {
     }
 }
 
-# Launch a ripping-loop window for each selected drive
-$scriptPath = Join-Path $PSScriptRoot 'ripping-loop.ps1'
 Write-Host ''
-foreach ($d in $selectedDrives) {
+
+# Layout: master pane (small strip at top), then drive panes split vertically (side by side) below.
+# First split-pane -H creates a large bottom area (0.9 = 90% of height).
+# Subsequent split-pane -V splits that bottom area into equal-width columns.
+$scriptPath = Join-Path $PSScriptRoot 'ripping-loop.ps1'
+$driveCount = $selectedDrives.Count
+$wtParts = @()
+
+for ($i = 0; $i -lt $driveCount; $i++) {
+    $d = $selectedDrives[$i]
     $driveLetter = $d.Letter.TrimEnd(':')
     $discIdx = $d.Index
-    $title = "Ripping - Drive $($d.Letter)"
-    $cmd = "& '$scriptPath' -InputDrive '$driveLetter' -MoviesDir '$MoviesDir' -DiscIndex $discIdx"
+    $title = "Drive $($d.Letter)"
+    $fileArgs = "powershell -NoExit -File `"$scriptPath`" -InputDrive `"$driveLetter`" -MoviesDir `"$MoviesDir`" -DiscIndex $discIdx"
 
-    Write-Host "Launching: $title (disc:$discIdx)" -ForegroundColor Green
-    Start-Process powershell -ArgumentList "-NoExit", "-Command", "(`$Host.UI.RawUI.WindowTitle = '$title'); $cmd"
+    if ($i -eq 0) {
+        # First drive: split horizontally from master, taking 90% of height
+        $wtParts += "split-pane -H -s 0.9 --title `"$title`" $fileArgs"
+    } else {
+        # Subsequent drives: split vertically (side by side) within the bottom area
+        $size = [math]::Round(1 - (1 / ($driveCount - $i + 1)), 4)
+        $wtParts += "split-pane -V -s $size --title `"$title`" $fileArgs"
+    }
+    Write-Host "  $title (disc:$discIdx)" -ForegroundColor Green
 }
 
+$wtCmdLine = '-w 0 ' + ($wtParts -join ' ; ')
+Start-Process wt -ArgumentList $wtCmdLine
+
 Write-Host ''
-Write-Host "Launched $($selectedDrives.Count) ripping window(s). You can close this window." -ForegroundColor Cyan
+Write-Host "Launched $driveCount ripping pane(s)." -ForegroundColor Cyan
+Write-Host 'Resize panes: Alt+Shift+Arrow | Switch panes: Alt+Arrow' -ForegroundColor DarkGray

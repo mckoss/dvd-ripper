@@ -17,6 +17,7 @@ if ([string]::IsNullOrWhiteSpace($InputDrive)) {
     }
 }
 $InputDriveLetter = "$($InputDrive.TrimEnd(':')):"
+$Host.UI.RawUI.WindowTitle = "Ripping - Drive $InputDriveLetter"
 
 if ([string]::IsNullOrWhiteSpace($MoviesDir)) {
     $DefaultMoviesDir = "G:\Movies"
