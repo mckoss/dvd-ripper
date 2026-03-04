@@ -41,8 +41,8 @@ if ($needsRenaming.Count -gt 0) {
     $titleSkipped = 0
 
     foreach ($mkv in $needsRenaming) {
-        # Strip -check-title suffix to get raw disc title
-        $rawBase = $mkv.BaseName -replace '-check-title$', ''
+        # Strip drive letter + -check-title suffix to get raw disc title
+        $rawBase = $mkv.BaseName -replace '-[A-Z]-check-title$', ''
         Write-Host '-------------------------------------------------------------' -ForegroundColor DarkGray
         Write-Host "  File: $($mkv.Name)" -ForegroundColor White
         Write-Host "       $($mkv.DirectoryName)" -ForegroundColor DarkGray

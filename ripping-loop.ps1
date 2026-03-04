@@ -85,7 +85,7 @@ while ($true) {
             $key = [Console]::ReadKey($true)
             if ($key.Key -eq 'Spacebar') {
                 Write-Host ''
-                $rawBase = [System.IO.Path]::GetFileNameWithoutExtension($lastRippedFile) -replace '-check-title$', ''
+                $rawBase = [System.IO.Path]::GetFileNameWithoutExtension($lastRippedFile) -replace '-[A-Z]-check-title$', ''
                 Write-Host '-------------------------------------------------------------' -ForegroundColor DarkGray
                 if ($lastMetaTitle) {
                     Write-Host "  Metadata title: $lastMetaTitle" -ForegroundColor Cyan
@@ -260,14 +260,15 @@ while ($true) {
                 }
             }
 
-            # Add -check-title suffix so encoding-loop knows the title hasn't been confirmed
-            # Use try/catch retry to prevent race conditions with concurrent drives
-            $FinalOutputFile = Join-Path $OutputDir "$finalName-check-title.mkv"
+            # Add drive letter + -check-title suffix so encoding-loop knows the title hasn't been confirmed
+            # Drive letter makes filenames unique per drive, preventing collisions
+            $driveSuffix = $InputDrive.TrimEnd(':')
+            $FinalOutputFile = Join-Path $OutputDir "$finalName-$driveSuffix-check-title.mkv"
             $counter = 2
             $moved = $false
             while (-not $moved) {
                 while (Test-Path $FinalOutputFile) {
-                    $FinalOutputFile = Join-Path $OutputDir "$finalName ($counter)-check-title.mkv"
+                    $FinalOutputFile = Join-Path $OutputDir "$finalName ($counter)-$driveSuffix-check-title.mkv"
                     $counter++
                 }
                 try {
@@ -275,7 +276,7 @@ while ($true) {
                     $moved = $true
                 } catch {
                     # Another drive claimed this name between Test-Path and Move-Item - try next
-                    $FinalOutputFile = Join-Path $OutputDir "$finalName ($counter)-check-title.mkv"
+                    $FinalOutputFile = Join-Path $OutputDir "$finalName ($counter)-$driveSuffix-check-title.mkv"
                     $counter++
                 }
             }
