@@ -53,10 +53,18 @@ if (-not (Test-Path $OutputDir)) {
 
 Write-Host "Starting Ripping Processing Loop..."
 $lastRippedFile = $null
+$lastMetaTitle = $null
 
 while ($true) {
     if ($lastRippedFile) {
-        Write-Host "`nWaiting for disc in drive $InputDriveLetter... (press SPACE to confirm title of last rip)" -ForegroundColor Cyan
+        $lastBaseName = [System.IO.Path]::GetFileNameWithoutExtension($lastRippedFile) -replace '-check-title$', ''
+        if ($lastMetaTitle) {
+            Write-Host "`n[$InputDriveLetter] Metadata title: $lastMetaTitle" -ForegroundColor Cyan
+        } else {
+            Write-Host "`n[$InputDriveLetter] Metadata title: (none)" -ForegroundColor DarkGray
+        }
+        Write-Host "[$InputDriveLetter] Saved as: $lastBaseName" -ForegroundColor White
+        Write-Host "Waiting for disc in drive $InputDriveLetter... (press SPACE to rename: $lastBaseName)" -ForegroundColor Cyan
     } else {
         Write-Host "`nWaiting for disc insertion in drive $InputDriveLetter..."
     }
@@ -79,6 +87,11 @@ while ($true) {
                 Write-Host ''
                 $rawBase = [System.IO.Path]::GetFileNameWithoutExtension($lastRippedFile) -replace '-check-title$', ''
                 Write-Host '-------------------------------------------------------------' -ForegroundColor DarkGray
+                if ($lastMetaTitle) {
+                    Write-Host "  Metadata title: $lastMetaTitle" -ForegroundColor Cyan
+                } else {
+                    Write-Host "  Metadata title: (none)" -ForegroundColor DarkGray
+                }
                 Write-Host "  File: $([System.IO.Path]::GetFileName($lastRippedFile))" -ForegroundColor White
                 Write-Host "       $([System.IO.Path]::GetDirectoryName($lastRippedFile))" -ForegroundColor DarkGray
 
@@ -228,9 +241,15 @@ while ($true) {
             $isGenericFilename = $mkvBaseName -match '^[A-Z]\d+_t\d+$' -or $mkvBaseName -match '^title_t\d+$'
             $isGenericVolume = $genericLabels -contains $SafeVolumeName
 
+            # Always show metadata title separately
+            if ($metaTitle) {
+                Write-Host "[$InputDriveLetter] Metadata title: $metaTitle" -ForegroundColor Cyan
+            } else {
+                Write-Host "[$InputDriveLetter] Metadata title: (none)" -ForegroundColor DarkGray
+            }
+
             if ($metaTitle) {
                 $finalName = $metaTitle -replace '[\\/:*?"<>|]', '_'
-                Write-Host "Using metadata title: $metaTitle" -ForegroundColor Cyan
             } elseif (-not $isGenericFilename -and $isGenericVolume) {
                 $finalName = $mkvBaseName -replace '[\\/:*?"<>|]', '_'
                 Write-Host "Using MKV filename '$mkvBaseName' instead of volume label '$VolumeName'"
@@ -242,16 +261,27 @@ while ($true) {
             }
 
             # Add -check-title suffix so encoding-loop knows the title hasn't been confirmed
+            # Use try/catch retry to prevent race conditions with concurrent drives
             $FinalOutputFile = Join-Path $OutputDir "$finalName-check-title.mkv"
             $counter = 2
-            while (Test-Path $FinalOutputFile) {
-                $FinalOutputFile = Join-Path $OutputDir "$finalName ($counter)-check-title.mkv"
-                $counter++
+            $moved = $false
+            while (-not $moved) {
+                while (Test-Path $FinalOutputFile) {
+                    $FinalOutputFile = Join-Path $OutputDir "$finalName ($counter)-check-title.mkv"
+                    $counter++
+                }
+                try {
+                    Move-Item -Path $trackedMkvFile.FullName -Destination $FinalOutputFile -ErrorAction Stop
+                    $moved = $true
+                } catch {
+                    # Another drive claimed this name between Test-Path and Move-Item - try next
+                    $FinalOutputFile = Join-Path $OutputDir "$finalName ($counter)-check-title.mkv"
+                    $counter++
+                }
             }
-
-            Move-Item -Path $trackedMkvFile.FullName -Destination $FinalOutputFile -Force
             Write-Host "Extraction complete. Saved as: $FinalOutputFile"
             $lastRippedFile = $FinalOutputFile
+            $lastMetaTitle = $metaTitle
 
             # Only delete temp directory if it's empty
             if (Test-Path $TempOutputDir) {
@@ -281,4 +311,7 @@ while ($true) {
     if ($shellDrive) {
         $shellDrive.InvokeVerb("Eject")
     }
+
+    # Wait for drive to settle after eject to prevent false re-detection
+    Start-Sleep -Seconds 8
 }
