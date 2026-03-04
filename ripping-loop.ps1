@@ -205,20 +205,26 @@ while ($true) {
     $exitCode = $process.ExitCode
 
     # Move file and cleanup
-    $shortTitleWarning = $false
     if ($null -eq $exitCode -or $exitCode -eq 0) {
         # Check if MakeMKV produced any output
         $mkvFiles = Get-ChildItem -Path $TempOutputDir -Filter *.mkv -ErrorAction SilentlyContinue
         if ($mkvFiles.Count -eq 0) {
-            Write-Host "No titles found over $([math]::Round($MinLength / 60)) minutes. Retrying with no minimum length to get the longest title..."
-            $shortTitleWarning = $true
-            $ArgumentList = "mkv $driveArg all `"$TempOutputDir`" --minlength=0"
-            $process = Start-Process -FilePath $MakeMkvPath -ArgumentList $ArgumentList -NoNewWindow -PassThru
-            $process.WaitForExit()
+            Write-Host "[$InputDriveLetter] No titles found over $([math]::Round($MinLength / 60)) minutes. Ejecting disc - reinsert to retry." -ForegroundColor Red
+            # Clean up empty temp directory
+            if ((Test-Path $TempOutputDir) -and (Get-ChildItem -Path $TempOutputDir -ErrorAction SilentlyContinue).Count -eq 0) {
+                Remove-Item -Path $TempOutputDir -Force
+            }
+            # Eject and continue to wait loop
+            Write-Host "Ejecting drive $InputDriveLetter..."
+            $shell = New-Object -ComObject Shell.Application
+            $shellDrive = $shell.Namespace(17).ParseName($InputDriveLetter)
+            if ($shellDrive) { $shellDrive.InvokeVerb("Eject") }
+            Start-Sleep -Seconds 8
+            continue
         }
 
         # Find the largest MKV (the main feature) from the temp directory
-        if ($shortTitleWarning -or $null -eq $trackedMkvFile -or -not (Test-Path $trackedMkvFile.FullName)) {
+        if ($null -eq $trackedMkvFile -or -not (Test-Path $trackedMkvFile.FullName)) {
             $foundMkv = Get-ChildItem -Path $TempOutputDir -Filter *.mkv -ErrorAction SilentlyContinue |
                 Sort-Object Length -Descending | Select-Object -First 1
             if ($foundMkv) {
@@ -228,10 +234,6 @@ while ($true) {
         }
 
         if ($null -ne $trackedMkvFile -and (Test-Path $trackedMkvFile.FullName)) {
-            if ($shortTitleWarning) {
-                $sizeMB = [math]::Round($trackedMkvFile.Length / 1MB, 0)
-                Write-Host "WARNING: No title over $([math]::Round($MinLength / 60)) min found. Kept longest title ($sizeMB MB): $($trackedMkvFile.Name)" -ForegroundColor Yellow
-            }
             Write-Host "MakeMKV completed successfully."
             # Determine best name: metadata title > MKV filename > volume label
             $metaTitle = Get-MkvTitle -FilePath $trackedMkvFile.FullName
