@@ -1,5 +1,6 @@
 param (
-    [string]$MoviesDir
+    [string]$MoviesDir,
+    [int]$MinLength = 3600
 )
 
 if ([string]::IsNullOrWhiteSpace($MoviesDir)) {
@@ -59,7 +60,7 @@ for ($i = 0; $i -lt $driveCount; $i++) {
     $driveLetter = $d.Letter.TrimEnd(':')
     $discIdx = $d.Index
     $title = "Drive $($d.Letter)"
-    $fileArgs = "powershell -NoExit -File `"$scriptPath`" -InputDrive `"$driveLetter`" -MoviesDir `"$MoviesDir`" -DiscIndex $discIdx"
+    $fileArgs = "powershell -NoExit -File `"$scriptPath`" -InputDrive `"$driveLetter`" -MoviesDir `"$MoviesDir`" -DiscIndex $discIdx -MinLength $MinLength"
 
     if ($i -eq 0) {
         # First drive: split horizontally from master, taking 90% of height

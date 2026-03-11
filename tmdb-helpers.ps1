@@ -88,6 +88,251 @@ function Search-TMDb {
     return @($allResults | Sort-Object -Property @{Expression={if ($_.title.ToLower().Trim() -eq $queryLower) { 0 } else { 1 }}; Ascending=$true}, @{Expression='vote_count'; Descending=$true} | Select-Object -First 5)
 }
 
+# --- TV Show Functions ---
+
+function Search-TMDbTV {
+    param([string]$Query, [string]$ApiKey)
+    $encoded = [System.Uri]::EscapeDataString($Query)
+    $queryLower = $Query.ToLower().Trim()
+    $allResults = @()
+    for ($page = 1; $page -le 2; $page++) {
+        $url = 'https://api.themoviedb.org/3/search/tv?api_key=' + $ApiKey + '&query=' + $encoded + '&page=' + $page
+        try {
+            $response = Invoke-RestMethod -Uri $url -Method Get -ErrorAction Stop
+            if ($response.results) { $allResults += $response.results }
+            if ($page -ge $response.total_pages) { break }
+        } catch {
+            Write-Host "  TMDb TV API error: $_" -ForegroundColor Red
+            return ,@()
+        }
+    }
+    # Sort: exact name match first, then vote count
+    return @($allResults | Sort-Object -Property @{Expression={if ($_.name.ToLower().Trim() -eq $queryLower) { 0 } else { 1 }}; Ascending=$true}, @{Expression='vote_count'; Descending=$true} | Select-Object -First 5)
+}
+
+function Show-TmdbTvResults {
+    param($Results)
+    Write-Host '  TMDb TV results:' -ForegroundColor Cyan
+    for ($i = 0; $i -lt $Results.Count; $i++) {
+        $r = $Results[$i]
+        $year = '????'
+        if ($r.first_air_date -and $r.first_air_date.Length -ge 4) {
+            $year = $r.first_air_date.Substring(0, 4)
+        }
+        $num = $i + 1
+        $votes = ''
+        if ($r.vote_count) { $votes = '  ' + $r.vote_count.ToString('N0') + ' votes' }
+        $rest = ' ' + $r.name + ' (' + $year + ')' + $votes
+        if ($i -eq 0) {
+            Write-Host ('    [' + $num + ']' + $rest) -ForegroundColor Green
+        } else {
+            Write-Host ('    [' + $num + ']' + $rest) -ForegroundColor White
+        }
+    }
+}
+
+function Get-TvYearFromResult {
+    param($Result)
+    if ($Result.first_air_date -and $Result.first_air_date.Length -ge 4) {
+        return $Result.first_air_date.Substring(0, 4)
+    }
+    return '????'
+}
+
+function Get-TMDbSeasonEpisodes {
+    param([int]$TvId, [int]$Season, [string]$ApiKey)
+    $url = 'https://api.themoviedb.org/3/tv/' + $TvId + '/season/' + $Season + '?api_key=' + $ApiKey
+    try {
+        $response = Invoke-RestMethod -Uri $url -Method Get -ErrorAction Stop
+        return $response.episodes
+    } catch {
+        Write-Host "  TMDb season API error: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+function Get-TMDbTvSeasons {
+    param([int]$TvId, [string]$ApiKey)
+    $url = 'https://api.themoviedb.org/3/tv/' + $TvId + '?api_key=' + $ApiKey
+    try {
+        $response = Invoke-RestMethod -Uri $url -Method Get -ErrorAction Stop
+        return $response.seasons | Where-Object { $_.season_number -gt 0 } | Sort-Object season_number
+    } catch {
+        Write-Host "  TMDb TV detail API error: $_" -ForegroundColor Red
+        return @()
+    }
+}
+
+# Interactive TV show rename prompt for collection folders.
+# Searches TMDb TV, lets user pick show + season, fetches episode names,
+# renames the folder and optionally individual MKV files.
+#
+# Parameters:
+#   -FolderPath   Path to the collection folder containing MKVs
+#   -RawBaseName  Fallback title derived from folder name
+#   -ApiKey       TMDb v3 API key
+#
+# Returns:
+#   @{ FolderName = 'Show Name (Year)' or $null; Choice = 'S'/etc }
+function Invoke-TmdbTvRenamePrompt {
+    param(
+        [string]$FolderPath,
+        [string]$RawBaseName,
+        [string]$ApiKey
+    )
+
+    $searchQuery = Format-RawTitle $RawBaseName
+    Write-Host "  Search query: $searchQuery" -ForegroundColor Gray
+
+    $results = @(Search-TMDbTV -Query $searchQuery -ApiKey $ApiKey)
+
+    if ($results.Count -eq 0) {
+        Write-Host '  No TMDb TV results found.' -ForegroundColor Yellow
+        $customSearch = Read-Host '  Enter corrected search (or press Enter to skip)'
+        if ([string]::IsNullOrWhiteSpace($customSearch)) {
+            return @{ FolderName = $null; Choice = 'S' }
+        }
+        $results = @(Search-TMDbTV -Query $customSearch -ApiKey $ApiKey)
+        if ($results.Count -eq 0) {
+            Write-Host '  Still no results. Skipping.' -ForegroundColor Yellow
+            return @{ FolderName = $null; Choice = 'S' }
+        }
+    }
+
+    Show-TmdbTvResults -Results $results
+    Write-Host '    [S] Skip  [C] Custom search  [M] Manual entry' -ForegroundColor DarkGray
+    Write-Host -NoNewline ('  Choose (1-' + $results.Count + '/S/C/M) [')
+    Write-Host -NoNewline '1' -ForegroundColor Green
+    Write-Host -NoNewline ']'
+    $choice = Read-Host ' '
+    if ([string]::IsNullOrWhiteSpace($choice)) { $choice = '1' }
+
+    $selected = $null
+    $showName = $null
+    $showYear = $null
+
+    if ($choice -match '^[Ss]$') {
+        return @{ FolderName = $null; Choice = 'S' }
+    }
+    elseif ($choice -match '^[Cc]$') {
+        $customSearch = Read-Host '  Enter search query'
+        $results = @(Search-TMDbTV -Query $customSearch -ApiKey $ApiKey)
+        if ($results.Count -eq 0) {
+            Write-Host '  No results. Skipping.' -ForegroundColor Yellow
+            return @{ FolderName = $null; Choice = 'S' }
+        }
+        Show-TmdbTvResults -Results $results
+        Write-Host -NoNewline ('  Choose (1-' + $results.Count + '/S) [')
+        Write-Host -NoNewline '1' -ForegroundColor Green
+        Write-Host -NoNewline ']'
+        $choice = Read-Host ' '
+        if ([string]::IsNullOrWhiteSpace($choice)) { $choice = '1' }
+        if ($choice -match '^[Ss]$' -or -not ($choice -match '^\d+$')) {
+            return @{ FolderName = $null; Choice = 'S' }
+        }
+    }
+    elseif ($choice -match '^[Mm]$') {
+        $manualTitle = Read-Host '  Enter show name'
+        $manualYear = Read-Host '  Enter year'
+        $showName = $manualTitle
+        $showYear = $manualYear
+    }
+
+    # Select show from results
+    if (-not $showName -and $choice -match '^\d+$') {
+        $idx = [int]$choice - 1
+        if ($idx -ge 0 -and $idx -lt $results.Count) {
+            $selected = $results[$idx]
+            $showName = $selected.name
+            $showYear = Get-TvYearFromResult -Result $selected
+        } else {
+            Write-Host '  Invalid choice. Skipping.' -ForegroundColor Yellow
+            return @{ FolderName = $null; Choice = 'S' }
+        }
+    }
+
+    if (-not $showName) {
+        return @{ FolderName = $null; Choice = 'S' }
+    }
+
+    $safeName = Format-MovieFilename -Title $showName -Year $showYear
+
+    # Ask for disc description (e.g. "Disc 1", "Episodes 1-10", "Season 2")
+    Write-Host ''
+    Write-Host "  Show: $safeName" -ForegroundColor Green
+    $discLabel = Read-Host '  Enter disc description (e.g. "Season 1 Disc 1", "Episodes 1-10", or Enter to skip)'
+    if (-not [string]::IsNullOrWhiteSpace($discLabel)) {
+        $folderName = "$safeName - $discLabel"
+    } else {
+        $folderName = $safeName
+    }
+
+    # Offer to rename individual episode files if we have a TMDb show selected
+    $mkvFiles = @(Get-ChildItem -Path $FolderPath -Filter *.mkv | Sort-Object Name)
+    if ($selected -and $mkvFiles.Count -gt 0) {
+        # Fetch seasons list
+        $seasons = @(Get-TMDbTvSeasons -TvId $selected.id -ApiKey $ApiKey)
+        if ($seasons.Count -gt 0) {
+            Write-Host ''
+            Write-Host '  Available seasons:' -ForegroundColor Cyan
+            foreach ($s in $seasons) {
+                $epCount = $s.episode_count
+                Write-Host "    Season $($s.season_number): $epCount episodes" -ForegroundColor White
+            }
+            Write-Host ''
+            $seasonChoice = Read-Host '  Enter season number to rename episodes (or Enter to skip)'
+
+            if ($seasonChoice -match '^\d+$') {
+                $seasonNum = [int]$seasonChoice
+                $episodes = @(Get-TMDbSeasonEpisodes -TvId $selected.id -Season $seasonNum -ApiKey $ApiKey)
+
+                if ($episodes.Count -gt 0) {
+                    Write-Host "  Fetched $($episodes.Count) episodes for season $seasonNum" -ForegroundColor Gray
+
+                    # Ask for starting episode offset (in case disc doesn't start at ep 1)
+                    $startEp = Read-Host "  Starting episode number on this disc (default: 1)"
+                    if ([string]::IsNullOrWhiteSpace($startEp)) { $startEp = 1 }
+                    $startIdx = [int]$startEp - 1
+
+                    Write-Host ''
+                    Write-Host '  Proposed episode renames:' -ForegroundColor Cyan
+                    $renames = @()
+                    for ($i = 0; $i -lt $mkvFiles.Count; $i++) {
+                        $epIdx = $startIdx + $i
+                        if ($epIdx -lt $episodes.Count) {
+                            $ep = $episodes[$epIdx]
+                            $epNum = $ep.episode_number
+                            $epName = $ep.name -replace '[\\/:*?"<>|]', ''
+                            $newFileName = 'S{0:D2}E{1:D2} - {2}.mkv' -f $seasonNum, $epNum, $epName
+                        } else {
+                            $newFileName = 'S{0:D2}E{1:D2}.mkv' -f $seasonNum, ($epIdx + 1)
+                        }
+                        $renames += @{ Old = $mkvFiles[$i]; New = $newFileName }
+                        $oldName = $mkvFiles[$i].Name
+                        Write-Host "    $oldName  ->  $newFileName" -ForegroundColor Gray
+                    }
+
+                    Write-Host ''
+                    $confirm = Read-Host '  Apply episode renames? (y/n) [y]'
+                    if ([string]::IsNullOrWhiteSpace($confirm)) { $confirm = 'y' }
+                    if ($confirm -match '^[Yy]$') {
+                        foreach ($r in $renames) {
+                            Rename-Item -Path $r.Old.FullName -NewName $r.New -ErrorAction SilentlyContinue
+                        }
+                        Write-Host "  Renamed $($renames.Count) episode files." -ForegroundColor Green
+                    } else {
+                        Write-Host '  Episode rename skipped.' -ForegroundColor Yellow
+                    }
+                } else {
+                    Write-Host '  No episodes found for that season.' -ForegroundColor Yellow
+                }
+            }
+        }
+    }
+
+    return @{ FolderName = $folderName; Choice = $choice }
+}
+
 function Format-MovieFilename {
     param([string]$Title, [string]$Year)
     $safe = $Title -replace '[/\\]', '-'

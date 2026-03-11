@@ -21,6 +21,20 @@ foreach ($dir in @($EncodedDir, $Mp4ArchiveDir)) {
     }
 }
 
+# Helper: find files under a directory (always recurses into subdirectories)
+function Find-Files {
+    param([string]$Path, [string]$Filter)
+    Get-ChildItem -Path $Path -Filter $Filter -File -Recurse
+}
+
+# Helper: remove empty subdirectories (deepest first)
+function Remove-EmptyDirs {
+    param([string]$Path)
+    Get-ChildItem -Path $Path -Directory -Recurse | Sort-Object FullName -Descending | Where-Object {
+        (Get-ChildItem -Path $_.FullName -Force).Count -eq 0
+    } | ForEach-Object { Remove-Item $_.FullName -Force }
+}
+
 function Invoke-RcloneUpload {
     param(
         [string]$SourceDir,
@@ -41,7 +55,7 @@ function Invoke-RcloneUpload {
 
 if ($Archive) {
     # ── Archive mode: upload from MP4s archive folder, skip already-existing ──
-    $files = @(Get-ChildItem -Path $Mp4ArchiveDir -Filter *.mp4 -File)
+    $files = @(Find-Files $Mp4ArchiveDir '*.mp4')
     if ($files.Count -eq 0) {
         Write-Host "No MP4 files found in archive: $Mp4ArchiveDir"
         exit 0
@@ -50,15 +64,16 @@ if ($Archive) {
     Write-Host "Archive mode: uploading from $Mp4ArchiveDir" -ForegroundColor Cyan
     Write-Host "Found $($files.Count) MP4(s) in archive." -ForegroundColor Gray
 
-    # List remote files once to check for duplicates
+    # List remote files once to check for duplicates (recursive listing)
     Write-Host "Checking remote for existing files..." -ForegroundColor Gray
-    $remoteList = @(rclone lsf gdrive:Movies --files-only 2>$null)
+    $remoteList = @(rclone lsf gdrive:Movies --files-only --recursive 2>$null)
 
     $toUpload = @()
     $alreadyRemote = @()
     foreach ($file in $files) {
-        if ($file.Name -in $remoteList) {
-            $alreadyRemote += $file.Name
+        $relPath = $file.FullName.Substring($Mp4ArchiveDir.Length).TrimStart('\', '/') -replace '\\', '/'
+        if ($relPath -in $remoteList) {
+            $alreadyRemote += $relPath
         } else {
             $toUpload += $file
         }
@@ -75,13 +90,17 @@ if ($Archive) {
     }
 
     Write-Host "`nWill upload $($toUpload.Count) new file(s):" -ForegroundColor White
-    $toUpload | ForEach-Object { Write-Host "  $($_.Name)" }
+    $toUpload | ForEach-Object {
+        $relPath = $_.FullName.Substring($Mp4ArchiveDir.Length).TrimStart('\', '/')
+        Write-Host "  $relPath"
+    }
 
-    # Build include filters so rclone only processes files we know are new
+    # Build include filters using relative paths so rclone only processes files we know are new
     $includeArgs = @()
     foreach ($f in $toUpload) {
+        $relPath = $f.FullName.Substring($Mp4ArchiveDir.Length).TrimStart('\', '/') -replace '\\', '/'
         $includeArgs += "--include"
-        $includeArgs += $f.Name
+        $includeArgs += $relPath
     }
 
     Write-Host "`nUploading to gdrive:Movies ..." -ForegroundColor Cyan
@@ -99,7 +118,7 @@ if ($Archive) {
 # ── Normal mode: upload from encoded-for-upload, then move to archive ─────────
 
 # Build exclude list for files that are locked (actively being encoded)
-$files = Get-ChildItem -Path $EncodedDir -Filter *.mp4
+$files = @(Find-Files $EncodedDir '*.mp4')
 $excludeArgs = @()
 $skipped = @()
 
@@ -108,9 +127,10 @@ foreach ($file in $files) {
         $stream = [System.IO.File]::Open($file.FullName, 'Open', 'Read', 'None')
         $stream.Close()
     } catch {
-        $skipped += $file.Name
+        $relPath = $file.FullName.Substring($EncodedDir.Length).TrimStart('\', '/') -replace '\\', '/'
+        $skipped += $relPath
         $excludeArgs += "--exclude"
-        $excludeArgs += $file.Name
+        $excludeArgs += $relPath
     }
 }
 
@@ -130,7 +150,10 @@ Write-Host "Uploading $uploadCount file(s) to gdrive:Movies ..." -ForegroundColo
 Invoke-RcloneUpload -SourceDir $EncodedDir -ExcludeArgs $excludeArgs
 
 # Determine which unlocked files can be moved (uploaded or already on remote)
-$unlocked = $files | Where-Object { $_.Name -notin $skipped }
+$unlocked = $files | Where-Object {
+    $relPath = $_.FullName.Substring($EncodedDir.Length).TrimStart('\', '/') -replace '\\', '/'
+    $relPath -notin $skipped
+}
 
 if ($script:lastUploaded.Count -gt 0) {
     Write-Host "`nFiles uploaded ($($script:lastUploaded.Count)):"
@@ -141,9 +164,17 @@ if ($unlocked.Count -gt 0) {
     $response = Read-Host "`nMove $($unlocked.Count) file(s) to $Mp4ArchiveDir? (y/N)"
     if ($response -eq 'y') {
         $unlocked | ForEach-Object {
-            Move-Item -Path $_.FullName -Destination $Mp4ArchiveDir -Force
-            Write-Host "  Moved: $($_.Name)"
+            $relPath = $_.FullName.Substring($EncodedDir.Length).TrimStart('\', '/')
+            $destPath = Join-Path $Mp4ArchiveDir $relPath
+            $destDir = Split-Path $destPath -Parent
+            if (-not (Test-Path $destDir)) {
+                New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+            }
+            Move-Item -Path $_.FullName -Destination $destPath -Force
+            Write-Host "  Moved: $relPath"
         }
+        # Clean up empty subdirectories left behind
+        Remove-EmptyDirs $EncodedDir
     }
 } else {
     Write-Host "`nNo files ready to move (all locked or none found)."

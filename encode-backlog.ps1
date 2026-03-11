@@ -28,8 +28,29 @@ foreach ($dir in @($EncodedDir, $MkvArchiveDir, $Mp4ArchiveDir)) {
     }
 }
 
+# Helper: get relative path from a base directory (without extension)
+function Get-RelativeBase {
+    param([string]$FilePath, [string]$BaseDir)
+    $rel = $FilePath.Substring($BaseDir.Length).TrimStart('\', '/')
+    return [System.IO.Path]::ChangeExtension($rel, $null).TrimEnd('.')
+}
+
+# Helper: find files under a directory (always recurses into subdirectories)
+function Find-Files {
+    param([string]$Path, [string]$Filter)
+    Get-ChildItem -Path $Path -Filter $Filter -File -Recurse
+}
+
+# Helper: remove empty subdirectories (deepest first)
+function Remove-EmptyDirs {
+    param([string]$Path)
+    Get-ChildItem -Path $Path -Directory -Recurse | Sort-Object FullName -Descending | Where-Object {
+        (Get-ChildItem -Path $_.FullName -Force).Count -eq 0
+    } | ForEach-Object { Remove-Item $_.FullName -Force }
+}
+
 # Step 1: Rename -check-title MKVs using TMDb lookup
-$needsRenaming = @(Get-ChildItem -Path $RippedDir -Filter *-check-title.mkv)
+$needsRenaming = @(Find-Files $RippedDir '*-check-title.mkv')
 
 if ($needsRenaming.Count -gt 0) {
     Write-Host "$($needsRenaming.Count) MKV(s) need title confirmation:" -ForegroundColor Cyan
@@ -76,7 +97,7 @@ if ($needsRenaming.Count -gt 0) {
 }
 
 # Re-scan after renaming (files may have new names now)
-$needsRenaming = @(Get-ChildItem -Path $RippedDir -Filter *-check-title.mkv)
+$needsRenaming = @(Find-Files $RippedDir '*-check-title.mkv')
 if ($needsRenaming.Count -gt 0) {
     Write-Host "$($needsRenaming.Count) file(s) still have -check-title suffix:" -ForegroundColor Yellow
     $needsRenaming | ForEach-Object { Write-Host "  $($_.Name)" }
@@ -84,7 +105,7 @@ if ($needsRenaming.Count -gt 0) {
 }
 
 # Step 1b: Catch MKVs missing a (Year) in the filename
-$missingYear = @(Get-ChildItem -Path $RippedDir -Filter *.mkv | Where-Object {
+$missingYear = @(Find-Files $RippedDir '*.mkv' | Where-Object {
     $_.BaseName -notmatch '\(\d{4}\)' -and $_.BaseName -notmatch '-check-title$'
 })
 
@@ -131,43 +152,63 @@ if ($missingYear.Count -gt 0) {
 }
 
 # Step 2: Check for MKVs that already have a corresponding MP4 in encoded-for-upload or MP4s archive
-$existingMp4Titles = @()
+# Use relative paths so subfolder structure is respected (e.g. "Show Name\S01E01" matches across dirs)
+$existingMp4RelPaths = @()
 if (Test-Path $EncodedDir) {
-    $existingMp4Titles += Get-ChildItem -Path $EncodedDir -Filter *.mp4 | ForEach-Object { $_.BaseName }
+    $existingMp4RelPaths += Find-Files $EncodedDir '*.mp4' | ForEach-Object {
+        Get-RelativeBase -FilePath $_.FullName -BaseDir $EncodedDir
+    }
 }
 if (Test-Path $Mp4ArchiveDir) {
-    $existingMp4Titles += Get-ChildItem -Path $Mp4ArchiveDir -Filter *.mp4 | ForEach-Object { $_.BaseName }
+    $existingMp4RelPaths += Find-Files $Mp4ArchiveDir '*.mp4' | ForEach-Object {
+        Get-RelativeBase -FilePath $_.FullName -BaseDir $Mp4ArchiveDir
+    }
 }
 
-# Step 3: Move already-encoded MKVs to the archive
-$alreadyEncoded = Get-ChildItem -Path $RippedDir -Filter *.mkv | Where-Object {
-    $_.BaseName -in $existingMp4Titles
-}
+# Step 3: Move already-encoded MKVs to the archive (preserving subfolder structure)
+$alreadyEncoded = @(Find-Files $RippedDir '*.mkv' | Where-Object {
+    $relBase = Get-RelativeBase -FilePath $_.FullName -BaseDir $RippedDir
+    $relBase -in $existingMp4RelPaths
+})
 
 if ($alreadyEncoded.Count -gt 0) {
     Write-Host "Moving already-encoded MKVs to archive ($($alreadyEncoded.Count)):"
     $alreadyEncoded | ForEach-Object {
+        $relPath = $_.FullName.Substring($RippedDir.Length).TrimStart('\', '/')
+        $destPath = Join-Path $MkvArchiveDir $relPath
+        $destDir = Split-Path $destPath -Parent
+        if (-not (Test-Path $destDir)) {
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+        }
         try {
-            Move-Item -Path $_.FullName -Destination $MkvArchiveDir -Force -ErrorAction Stop
-            Write-Host "  Archived: $($_.Name)"
+            Move-Item -Path $_.FullName -Destination $destPath -Force -ErrorAction Stop
+            Write-Host "  Archived: $relPath"
         } catch {
-            Write-Host "  Skipped (file in use): $($_.Name)" -ForegroundColor Yellow
+            Write-Host "  Skipped (file in use): $relPath" -ForegroundColor Yellow
         }
     }
+    # Clean up empty subdirectories left behind in ripped-for-encoding
+    Remove-EmptyDirs $RippedDir
     Write-Host ""
 }
 
 # Step 4: Find MKVs that still need encoding
-$needsEncoding = Get-ChildItem -Path $RippedDir -Filter *.mkv | Where-Object {
-    $_.BaseName -notin $existingMp4Titles
-}
+$needsEncoding = @(Find-Files $RippedDir '*.mkv' | Where-Object {
+    $relBase = Get-RelativeBase -FilePath $_.FullName -BaseDir $RippedDir
+    $relBase -notin $existingMp4RelPaths
+})
 
 if ($needsEncoding.Count -eq 0) {
     Write-Host "No MKV files need encoding."
 } else {
     Write-Host "MKV files ready for encoding ($($needsEncoding.Count)):"
-    $needsEncoding | ForEach-Object { Write-Host "  $($_.Name)" }
+    $needsEncoding | ForEach-Object {
+        $relPath = $_.FullName.Substring($RippedDir.Length).TrimStart('\', '/')
+        Write-Host "  $relPath"
+    }
 
+    Write-Host "`nHandBrake output must mirror subfolder structure under:" -ForegroundColor Gray
+    Write-Host "  $EncodedDir" -ForegroundColor Gray
     $response = Read-Host "`nLaunch HandBrake on the ripped-for-encoding folder? (y/N)"
     if ($response -eq 'y') {
         Write-Host "`nLaunching HandBrake..."

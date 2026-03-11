@@ -1,7 +1,8 @@
 param (
     [string]$InputDrive,
     [string]$MoviesDir,
-    [int]$DiscIndex = -1
+    [int]$DiscIndex = -1,
+    [int]$MinLength = 3600
 )
 
 $MakeMkvPath = "C:\Program Files (x86)\MakeMKV\makemkvcon64.exe"
@@ -27,7 +28,6 @@ if ([string]::IsNullOrWhiteSpace($MoviesDir)) {
     }
 }
 $OutputDir = Join-Path $MoviesDir "processing\ripped-for-encoding"
-$MinLength = 3600
 $AlertSoundPath = Join-Path $PSScriptRoot "alert.wav"
 
 # Build MakeMKV drive argument: disc:N if provided, otherwise dev:X:
@@ -57,14 +57,16 @@ $lastMetaTitle = $null
 
 while ($true) {
     if ($lastRippedFile) {
-        $lastBaseName = [System.IO.Path]::GetFileNameWithoutExtension($lastRippedFile) -replace '-check-title$', ''
+        $lastIsFolder = Test-Path $lastRippedFile -PathType Container
+        $lastDisplayName = (Split-Path $lastRippedFile -Leaf) -replace '-[A-Z]-check-title$', ''
         if ($lastMetaTitle) {
             Write-Host "`n[$InputDriveLetter] Metadata title: $lastMetaTitle" -ForegroundColor Cyan
         } else {
             Write-Host "`n[$InputDriveLetter] Metadata title: (none)" -ForegroundColor DarkGray
         }
-        Write-Host "[$InputDriveLetter] Saved as: $lastBaseName" -ForegroundColor White
-        Write-Host "Waiting for disc in drive $InputDriveLetter... (press SPACE to rename: $lastBaseName)" -ForegroundColor Cyan
+        $typeLabel = if ($lastIsFolder) { 'Collection folder' } else { 'Saved as' }
+        Write-Host "[$InputDriveLetter] $($typeLabel): $lastDisplayName" -ForegroundColor White
+        Write-Host "Waiting for disc in drive $InputDriveLetter... (press SPACE to rename: $lastDisplayName)" -ForegroundColor Cyan
     } else {
         Write-Host "`nWaiting for disc insertion in drive $InputDriveLetter..."
     }
@@ -80,34 +82,56 @@ while ($true) {
     while ($true) {
         if (Test-Path "$InputDriveLetter\") { break }
 
-        # Check for SPACE to rename the last ripped file
+        # Check for SPACE to rename the last ripped file or folder
         if ($lastRippedFile -and [Console]::KeyAvailable) {
             $key = [Console]::ReadKey($true)
             if ($key.Key -eq 'Spacebar') {
                 Write-Host ''
-                $rawBase = [System.IO.Path]::GetFileNameWithoutExtension($lastRippedFile) -replace '-[A-Z]-check-title$', ''
+                $isFolder = Test-Path $lastRippedFile -PathType Container
+                $rawBase = (Split-Path $lastRippedFile -Leaf) -replace '-[A-Z]-check-title(\.mkv)?$', ''
                 Write-Host '-------------------------------------------------------------' -ForegroundColor DarkGray
                 if ($lastMetaTitle) {
                     Write-Host "  Metadata title: $lastMetaTitle" -ForegroundColor Cyan
                 } else {
                     Write-Host "  Metadata title: (none)" -ForegroundColor DarkGray
                 }
-                Write-Host "  File: $([System.IO.Path]::GetFileName($lastRippedFile))" -ForegroundColor White
-                Write-Host "       $([System.IO.Path]::GetDirectoryName($lastRippedFile))" -ForegroundColor DarkGray
 
-                $tmdbResult = Invoke-TmdbRenamePrompt -FilePath $lastRippedFile -RawBaseName $rawBase -ApiKey $TmdbApiKey
+                if ($isFolder) {
+                    $folderMkvs = @(Get-ChildItem -Path $lastRippedFile -Filter *.mkv)
+                    Write-Host "  Folder: $(Split-Path $lastRippedFile -Leaf)  ($($folderMkvs.Count) titles)" -ForegroundColor Magenta
+                    Write-Host "       $($lastRippedFile)" -ForegroundColor DarkGray
 
-                if ($tmdbResult.NewBase) {
-                    $newName = $tmdbResult.NewBase + '.mkv'
-                    $newPath = Join-Path $OutputDir $newName
-                    if (Test-Path $newPath) {
-                        Write-Host "  SKIPPED (target exists): $newName" -ForegroundColor Yellow
+                    $tvResult = Invoke-TmdbTvRenamePrompt -FolderPath $lastRippedFile -RawBaseName $rawBase -ApiKey $TmdbApiKey
+
+                    if ($tvResult.FolderName) {
+                        $newFolderPath = Join-Path $OutputDir $tvResult.FolderName
+                        if (Test-Path $newFolderPath) {
+                            Write-Host "  SKIPPED (target exists): $($tvResult.FolderName)" -ForegroundColor Yellow
+                        } else {
+                            Rename-Item -Path $lastRippedFile -NewName $tvResult.FolderName -ErrorAction Stop
+                            Write-Host "  Renamed folder: $(Split-Path $lastRippedFile -Leaf) -> $($tvResult.FolderName)" -ForegroundColor Green
+                        }
                     } else {
-                        Rename-Item -Path $lastRippedFile -NewName $newName -ErrorAction Stop
-                        Write-Host "  Renamed: $([System.IO.Path]::GetFileName($lastRippedFile)) -> $newName" -ForegroundColor Green
+                        Write-Host '  Skipped. Folder can be renamed later.' -ForegroundColor Yellow
                     }
                 } else {
-                    Write-Host '  Skipped. Title can be confirmed later via encode-backlog.' -ForegroundColor Yellow
+                    Write-Host "  File: $([System.IO.Path]::GetFileName($lastRippedFile))" -ForegroundColor White
+                    Write-Host "       $([System.IO.Path]::GetDirectoryName($lastRippedFile))" -ForegroundColor DarkGray
+
+                    $tmdbResult = Invoke-TmdbRenamePrompt -FilePath $lastRippedFile -RawBaseName $rawBase -ApiKey $TmdbApiKey
+
+                    if ($tmdbResult.NewBase) {
+                        $newName = $tmdbResult.NewBase + '.mkv'
+                        $newPath = Join-Path $OutputDir $newName
+                        if (Test-Path $newPath) {
+                            Write-Host "  SKIPPED (target exists): $newName" -ForegroundColor Yellow
+                        } else {
+                            Rename-Item -Path $lastRippedFile -NewName $newName -ErrorAction Stop
+                            Write-Host "  Renamed: $([System.IO.Path]::GetFileName($lastRippedFile)) -> $newName" -ForegroundColor Green
+                        }
+                    } else {
+                        Write-Host '  Skipped. Title can be confirmed later via encode-backlog.' -ForegroundColor Yellow
+                    }
                 }
                 $lastRippedFile = $null
                 Write-Host ''
@@ -207,7 +231,7 @@ while ($true) {
     # Move file and cleanup
     if ($null -eq $exitCode -or $exitCode -eq 0) {
         # Check if MakeMKV produced any output
-        $mkvFiles = Get-ChildItem -Path $TempOutputDir -Filter *.mkv -ErrorAction SilentlyContinue
+        $mkvFiles = @(Get-ChildItem -Path $TempOutputDir -Filter *.mkv -ErrorAction SilentlyContinue)
         if ($mkvFiles.Count -eq 0) {
             Write-Host "[$InputDriveLetter] No titles found over $([math]::Round($MinLength / 60)) minutes. Ejecting disc - reinsert to retry." -ForegroundColor Red
             # Clean up empty temp directory
@@ -223,23 +247,64 @@ while ($true) {
             continue
         }
 
-        # Find the largest MKV (the main feature) from the temp directory
-        if ($null -eq $trackedMkvFile -or -not (Test-Path $trackedMkvFile.FullName)) {
-            $foundMkv = Get-ChildItem -Path $TempOutputDir -Filter *.mkv -ErrorAction SilentlyContinue |
-                Sort-Object Length -Descending | Select-Object -First 1
-            if ($foundMkv) {
-                $trackedMkvFile = $foundMkv
+        Write-Host "MakeMKV completed successfully. $($mkvFiles.Count) title(s) ripped."
+
+        if ($mkvFiles.Count -gt 1) {
+            # --- COLLECTION MODE: multiple titles (TV episodes, cartoon collections, etc.) ---
+            # Keep all MKVs in the folder, rename the folder instead
+            $totalSizeMB = [math]::Round(($mkvFiles | Measure-Object Length -Sum).Sum / 1MB, 0)
+            Write-Host "[$InputDriveLetter] Collection disc: $($mkvFiles.Count) titles ($totalSizeMB MB total)" -ForegroundColor Magenta
+            $mkvFiles | Sort-Object Name | ForEach-Object {
+                $sizeMB = [math]::Round($_.Length / 1MB, 0)
+                Write-Host "  $($_.Name)  ($sizeMB MB)" -ForegroundColor Gray
+            }
+
+            # Determine best folder name: metadata title from largest file > volume label
+            $largestMkv = $mkvFiles | Sort-Object Length -Descending | Select-Object -First 1
+            $metaTitle = Get-MkvTitle -FilePath $largestMkv.FullName
+            if ($metaTitle) {
+                Write-Host "[$InputDriveLetter] Metadata title: $metaTitle" -ForegroundColor Cyan
+            } else {
+                Write-Host "[$InputDriveLetter] Metadata title: (none)" -ForegroundColor DarkGray
+            }
+
+            $genericLabels = @('UNKNOWN_DISC', 'DVD_VIDEO', 'DVDVOLUME', 'DVD')
+            $isGenericVolume = $genericLabels -contains $SafeVolumeName
+            if ($metaTitle) {
+                $folderName = $metaTitle -replace '[\\/:*?"<>|]', '_'
+            } elseif (-not $isGenericVolume) {
+                $folderName = $SafeVolumeName
+            } else {
+                $folderName = "UNKNOWN_COLLECTION"
+                Write-Host "WARNING: No metadata title and generic volume label." -ForegroundColor Yellow
+            }
+
+            # Rename folder with drive letter + check-title suffix
+            $driveSuffix = $InputDrive.TrimEnd(':')
+            $newFolderName = "$folderName-$driveSuffix-check-title"
+            $newFolderPath = Join-Path $OutputDir $newFolderName
+            $counter = 2
+            while (Test-Path $newFolderPath) {
+                $newFolderPath = Join-Path $OutputDir "$folderName ($counter)-$driveSuffix-check-title"
+                $counter++
+            }
+            Rename-Item -Path $TempOutputDir -NewName (Split-Path $newFolderPath -Leaf)
+            Write-Host "[$InputDriveLetter] Collection saved as folder: $(Split-Path $newFolderPath -Leaf)" -ForegroundColor Green
+
+            $lastRippedFile = $newFolderPath
+            $lastMetaTitle = $metaTitle
+        } else {
+            # --- SINGLE MOVIE MODE: one title ---
+            # Find the MKV (may have been tracked during ripping, or find it now)
+            if ($null -eq $trackedMkvFile -or -not (Test-Path $trackedMkvFile.FullName)) {
+                $trackedMkvFile = $mkvFiles[0]
                 Write-Host "Found MKV file after completion: $($trackedMkvFile.Name)"
             }
-        }
 
-        if ($null -ne $trackedMkvFile -and (Test-Path $trackedMkvFile.FullName)) {
-            Write-Host "MakeMKV completed successfully."
             # Determine best name: metadata title > MKV filename > volume label
             $metaTitle = Get-MkvTitle -FilePath $trackedMkvFile.FullName
             $mkvBaseName = $trackedMkvFile.BaseName -replace '-[A-Z]\d+_t\d+$', ''  # Strip track suffix like -A5_t00
             $genericLabels = @('UNKNOWN_DISC', 'DVD_VIDEO', 'DVDVOLUME', 'DVD')
-            $genericFilenames = @{ }  # basenames that are just track IDs like A1_t00, title_t01
             $isGenericFilename = $mkvBaseName -match '^[A-Z]\d+_t\d+$' -or $mkvBaseName -match '^title_t\d+$'
             $isGenericVolume = $genericLabels -contains $SafeVolumeName
 
@@ -295,12 +360,6 @@ while ($true) {
                     Write-Host "Temp folder not empty - additional files left for inspection: $TempOutputDir"
                     $remaining | ForEach-Object { Write-Host "  $($_.Name)" }
                 }
-            }
-        } else {
-            Write-Host "WARNING: MakeMKV produced no output files. Disc may be damaged or unreadable."
-            # Clean up empty temp directory
-            if ((Test-Path $TempOutputDir) -and (Get-ChildItem -Path $TempOutputDir -ErrorAction SilentlyContinue).Count -eq 0) {
-                Remove-Item -Path $TempOutputDir -Force
             }
         }
     } else {
