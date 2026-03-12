@@ -145,7 +145,7 @@ if ($skipped.Count -gt 0) {
     Write-Host ""
 }
 
-$uploadCount = ($files | Where-Object { $_.Name -notin $skipped }).Count
+$uploadCount = $files.Count - $skipped.Count
 Write-Host "Uploading $uploadCount file(s) to gdrive:Movies ..." -ForegroundColor Cyan
 Invoke-RcloneUpload -SourceDir $EncodedDir -ExcludeArgs $excludeArgs
 
@@ -161,19 +161,32 @@ if ($script:lastUploaded.Count -gt 0) {
 }
 
 if ($unlocked.Count -gt 0) {
-    $response = Read-Host "`nMove $($unlocked.Count) file(s) to $Mp4ArchiveDir? (y/N)"
+    # Show what will be moved, grouped by subfolder
+    $unlockedRels = $unlocked | ForEach-Object {
+        $_.FullName.Substring($EncodedDir.Length).TrimStart('\', '/')
+    }
+    Write-Host "`nFiles to archive ($($unlocked.Count)):"
+    $unlockedRels | ForEach-Object { Write-Host "  $_" }
+
+    $response = Read-Host "`nMove to ${Mp4ArchiveDir}? (y/N)"
     if ($response -eq 'y') {
-        $unlocked | ForEach-Object {
-            $relPath = $_.FullName.Substring($EncodedDir.Length).TrimStart('\', '/')
+        $moved = 0
+        foreach ($file in $unlocked) {
+            $relPath = $file.FullName.Substring($EncodedDir.Length).TrimStart('\', '/')
             $destPath = Join-Path $Mp4ArchiveDir $relPath
             $destDir = Split-Path $destPath -Parent
             if (-not (Test-Path $destDir)) {
                 New-Item -ItemType Directory -Path $destDir -Force | Out-Null
             }
-            Move-Item -Path $_.FullName -Destination $destPath -Force
-            Write-Host "  Moved: $relPath"
+            try {
+                Move-Item -Path $file.FullName -Destination $destPath -Force -ErrorAction Stop
+                Write-Host "  Moved: $relPath"
+                $moved++
+            } catch {
+                Write-Host "  Failed: $relPath - $($_.Exception.Message)" -ForegroundColor Yellow
+            }
         }
-        # Clean up empty subdirectories left behind
+        Write-Host "`n$moved file(s) archived." -ForegroundColor Green
         Remove-EmptyDirs $EncodedDir
     }
 } else {
