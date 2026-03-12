@@ -201,18 +201,35 @@ $needsEncoding = @(Find-Files $RippedDir '*.mkv' | Where-Object {
 if ($needsEncoding.Count -eq 0) {
     Write-Host "No MKV files need encoding."
 } else {
+    # Group MKVs by directory for display and launching
+    $dirGroups = $needsEncoding | Group-Object DirectoryName
     Write-Host "MKV files ready for encoding ($($needsEncoding.Count)):"
-    $needsEncoding | ForEach-Object {
-        $relPath = $_.FullName.Substring($RippedDir.Length).TrimStart('\', '/')
-        Write-Host "  $relPath"
+    foreach ($group in $dirGroups) {
+        $sourceDir = $group.Name
+        $relSubDir = $sourceDir.Substring($RippedDir.Length).TrimStart('\', '/')
+        $outputDir = if ($relSubDir) { Join-Path $EncodedDir $relSubDir } else { $EncodedDir }
+        Write-Host "`n  Source:      $sourceDir" -ForegroundColor Gray
+        Write-Host "  Destination: $outputDir" -ForegroundColor Gray
+        $group.Group | ForEach-Object { Write-Host "    $($_.Name)" }
     }
 
-    Write-Host "`nHandBrake output must mirror subfolder structure under:" -ForegroundColor Gray
-    Write-Host "  $EncodedDir" -ForegroundColor Gray
-    $response = Read-Host "`nLaunch HandBrake on the ripped-for-encoding folder? (y/N)"
+    $response = Read-Host "`nLaunch HandBrake on the above folder(s)? (y/N)"
     if ($response -eq 'y') {
-        Write-Host "`nLaunching HandBrake..."
-        Write-Host "Set HandBrake output to: $EncodedDir"
-        Start-Process "C:\Program Files\HandBrake\HandBrake.exe" -ArgumentList "`"$RippedDir`""
+        foreach ($group in $dirGroups) {
+            $sourceDir = $group.Name
+            $relSubDir = $sourceDir.Substring($RippedDir.Length).TrimStart('\', '/')
+            $outputDir = if ($relSubDir) { Join-Path $EncodedDir $relSubDir } else { $EncodedDir }
+            if (-not (Test-Path $outputDir)) {
+                New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
+            }
+            Write-Host "`nLaunching HandBrake for: $sourceDir" -ForegroundColor Cyan
+            Write-Host "  ($($group.Count) file(s))"
+            Write-Host ""
+            Write-Host "  ** Before adding to the queue, set the default output folder **" -ForegroundColor Yellow
+            Write-Host "  In HandBrake: Tools > Preferences > Output Files > Default Path" -ForegroundColor Yellow
+            Write-Host "  Set to: $outputDir" -ForegroundColor Yellow
+            Write-Host "  (Changing the preference updates the path for files not yet queued)" -ForegroundColor Yellow
+            Start-Process "C:\Program Files\HandBrake\HandBrake.exe" -ArgumentList "`"$sourceDir`""
+        }
     }
 }
