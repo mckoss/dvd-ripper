@@ -1,3 +1,20 @@
+<#
+.SYNOPSIS
+    Deletes source files that are confirmed backed up in another folder.
+
+.DESCRIPTION
+    Compares files in Source against Backup by relative path and file size.
+    Lists matching files and prompts before deleting from Source.
+
+.PARAMETER Source
+    Folder containing files to check and potentially delete.
+
+.PARAMETER Backup
+    Folder to verify files exist in (by matching path and size).
+
+.EXAMPLE
+    .\delete-if-backedup.ps1 -Source "G:\Movies\MP4s" -Backup "H:\Backup\MP4s"
+#>
 param (
     [string]$Source,
     [string]$Backup

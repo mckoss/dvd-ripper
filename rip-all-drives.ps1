@@ -1,3 +1,22 @@
+<#
+.SYNOPSIS
+    Launches parallel ripping sessions for all optical drives.
+
+.DESCRIPTION
+    Detects optical drives, lets you select which to use, then opens
+    Windows Terminal with side-by-side panes running ripping-loop.ps1
+    for each selected drive.
+
+.PARAMETER MoviesDir
+    Root movies directory (default: G:\Movies).
+
+.PARAMETER MinLength
+    Minimum title length in seconds to rip (default: 3600).
+
+.EXAMPLE
+    .\rip-all-drives.ps1
+    .\rip-all-drives.ps1 -MinLength 1800
+#>
 param (
     [string]$MoviesDir,
     [int]$MinLength = 3600

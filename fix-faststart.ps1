@@ -1,6 +1,19 @@
-# fix-faststart.ps1
-# Checks MP4 files for moov atom placement and applies faststart if needed.
+<#
+.SYNOPSIS
+    Checks MP4 files for moov atom placement and fixes with faststart.
 
+.DESCRIPTION
+    Scans MP4 files in MP4s archive and encoded-for-upload directories.
+    If the moov atom is after mdat (slow streaming start), re-muxes
+    with ffmpeg -movflags +faststart to move moov to the front.
+
+.PARAMETER MoviesDir
+    Root movies directory (default: G:\Movies).
+
+.EXAMPLE
+    .\fix-faststart.ps1
+    .\fix-faststart.ps1 -MoviesDir "H:\Media"
+#>
 param(
     [string]$MoviesDir
 )

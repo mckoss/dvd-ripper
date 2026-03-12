@@ -1,3 +1,23 @@
+<#
+.SYNOPSIS
+    Processes ripped MKV files for encoding with HandBrake.
+
+.DESCRIPTION
+    Scans the ripped-for-encoding directory, archives MKVs that already have
+    matching MP4s, prompts to rename untitled files via TMDb lookup, then
+    launches HandBrake one folder at a time with the correct output path.
+
+.PARAMETER MoviesDir
+    Root movies directory (default: G:\Movies). Expects subfolders:
+      processing\ripped-for-encoding  - source MKVs
+      processing\encoded-for-upload   - HandBrake output
+      MKVs\                           - MKV archive
+      MP4s\                           - MP4 archive
+
+.EXAMPLE
+    .\encode-backlog.ps1
+    .\encode-backlog.ps1 -MoviesDir "H:\Media"
+#>
 param (
     [string]$MoviesDir
 )

@@ -1,3 +1,26 @@
+<#
+.SYNOPSIS
+    Uploads encoded MP4s to Google Drive and archives them locally.
+
+.DESCRIPTION
+    Finds MP4 files in encoded-for-upload, skips locked files still being
+    encoded, uploads via rclone to gdrive:Movies, then offers to move the
+    uploaded files to the local MP4s archive. Preserves subfolder structure.
+
+    In -Archive mode, uploads directly from the MP4s archive folder,
+    skipping files that already exist on the remote.
+
+.PARAMETER MoviesDir
+    Root movies directory (default: G:\Movies).
+
+.PARAMETER Archive
+    Upload from the MP4s archive folder instead of encoded-for-upload.
+
+.EXAMPLE
+    .\upload-mp4s.ps1
+    .\upload-mp4s.ps1 -Archive
+    .\upload-mp4s.ps1 -MoviesDir "H:\Media"
+#>
 param (
     [string]$MoviesDir,
     [switch]$Archive

@@ -1,11 +1,24 @@
-# fix-titles.ps1
-# Renames MKV and MP4 files to "Movie Title (Year).ext" using TMDb lookup.
-# MKV-driven: finds all MKVs first, then locates the matching MP4 wherever it may be.
-# Extracts the raw title from MKV metadata (or filename) and searches TMDb for the
-# official title and release year. Presents matches for confirmation before renaming.
-#
-# Requires: TMDb API key (free at https://www.themoviedb.org/settings/api), ffprobe (from FFmpeg)
+<#
+.SYNOPSIS
+    Renames MKV and MP4 files to "Movie Title (Year).ext" using TMDb lookup.
 
+.DESCRIPTION
+    Scans MKV and MP4 archive/processing directories, extracts raw titles
+    from MKV metadata or filenames, searches TMDb for the official title
+    and release year, and renames after confirmation. Supports single and
+    batch modes. Requires a TMDb API key and ffprobe (from FFmpeg).
+
+.PARAMETER MoviesDir
+    Root movies directory (default: G:\Movies).
+
+.PARAMETER TmdbApiKey
+    TMDb API key (v3). If not provided, reads from TMDB_API_KEY env var
+    or prompts interactively.
+
+.EXAMPLE
+    .\fix-titles.ps1
+    .\fix-titles.ps1 -MoviesDir "H:\Media"
+#>
 param(
     [string]$MoviesDir,
     [string]$TmdbApiKey

@@ -1,3 +1,28 @@
+<#
+.SYNOPSIS
+    Continuously rips discs from a single optical drive using MakeMKV.
+
+.DESCRIPTION
+    Monitors a drive for inserted discs, rips all titles meeting the
+    minimum length, renames using TMDb lookup, and saves to the
+    ripped-for-encoding directory. Loops until stopped.
+
+.PARAMETER InputDrive
+    Drive letter to rip from (default: D).
+
+.PARAMETER MoviesDir
+    Root movies directory (default: G:\Movies).
+
+.PARAMETER DiscIndex
+    MakeMKV disc index (auto-detected if -1).
+
+.PARAMETER MinLength
+    Minimum title length in seconds to rip (default: 3600).
+
+.EXAMPLE
+    .\ripping-loop.ps1
+    .\ripping-loop.ps1 -InputDrive F -MinLength 1800
+#>
 param (
     [string]$InputDrive,
     [string]$MoviesDir,
