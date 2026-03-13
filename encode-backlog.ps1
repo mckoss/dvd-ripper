@@ -177,14 +177,24 @@ if ($needsEncoding.Count -eq 0) {
         Write-Host "  Destination: $outputDir" -ForegroundColor Gray
         $group.Group | ForEach-Object { Write-Host "    $($_.Name)" }
 
-        $response = Read-Host "`nProcess this folder? (y/N)"
-        if ($response -ne 'y') {
+        Write-Host ""
+        Write-Host "  [Y] Rename titles then encode (default)" -ForegroundColor Green
+        Write-Host "  [E] Encode as-is (skip renaming)"
+        Write-Host "  [S] Skip this folder"
+        $response = Read-Host "Choice"
+        if ($response -match '^[Ss]$') {
+            Write-Host "  Skipped.`n"
+            continue
+        }
+        if ($response -notmatch '^[EeYy]?$' -and -not [string]::IsNullOrWhiteSpace($response)) {
             Write-Host "  Skipped.`n"
             continue
         }
 
-        # Rename titles needing confirmation in this directory
-        Invoke-TitleRenames -Dir $sourceDir | Out-Null
+        # Rename titles needing confirmation in this directory (unless encode as-is)
+        if ($response -notmatch '^[Ee]$') {
+            Invoke-TitleRenames -Dir $sourceDir | Out-Null
+        }
 
         if (-not (Test-Path $outputDir)) {
             New-Item -ItemType Directory -Path $outputDir -Force | Out-Null
