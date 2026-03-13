@@ -223,6 +223,7 @@ while ($true) {
     # Monitor file size
     $progressCounter = 0
     $trackedMkvFile = $null
+    $lastSizeBytes = 0
     while (-not $process.HasExited) {
         Start-Sleep -Seconds 2
         $progressCounter += 2
@@ -234,6 +235,7 @@ while ($true) {
                 $mkvFile = Get-ChildItem -Path $TempOutputDir -Filter *.mkv | Sort-Object Length -Descending | Select-Object -First 1
                 if ($mkvFile) {
                     $trackedMkvFile = $mkvFile
+                    $lastSizeBytes = $mkvFile.Length
                     Write-Host "[$InputDriveLetter] Detected MKV file: $($trackedMkvFile.Name)"
                 }
             }
@@ -242,8 +244,11 @@ while ($true) {
             if ($null -ne $trackedMkvFile) {
                 # Refresh the file info to get current size
                 $trackedMkvFile.Refresh()
-                $sizeMB = [math]::Round($trackedMkvFile.Length / 1MB, 2)
-                Write-Host "[$InputDriveLetter] Progress: $sizeMB MB written..."
+                $currentBytes = $trackedMkvFile.Length
+                $sizeMB = [math]::Round($currentBytes / 1MB, 2)
+                $speedMBs = [math]::Round(($currentBytes - $lastSizeBytes) / 1MB / 60, 1)
+                $lastSizeBytes = $currentBytes
+                Write-Host "[$InputDriveLetter] Progress: $sizeMB MB written ($speedMBs MB/s)"
             }
             $progressCounter = 0
         }
