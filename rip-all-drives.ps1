@@ -41,13 +41,13 @@ if ($cdroms.Count -eq 0) {
 
 $drives = @()
 for ($i = 0; $i -lt $cdroms.Count; $i++) {
-    $drives += @{ Index = $i; Letter = $cdroms[$i].Drive; Name = $cdroms[$i].Name }
+    $drives += @{ Letter = $cdroms[$i].Drive; Name = $cdroms[$i].Name }
 }
 
 Write-Host ''
 Write-Host "Found $($drives.Count) optical drive(s):" -ForegroundColor Green
 foreach ($d in $drives) {
-    Write-Host "  disc:$($d.Index) = $($d.Letter)  ($($d.Name))" -ForegroundColor White
+    Write-Host "  $($d.Letter)  $($d.Name)" -ForegroundColor White
 }
 Write-Host ''
 
@@ -77,9 +77,8 @@ $wtParts = @()
 for ($i = 0; $i -lt $driveCount; $i++) {
     $d = $selectedDrives[$i]
     $driveLetter = $d.Letter.TrimEnd(':')
-    $discIdx = $d.Index
     $title = "Drive $($d.Letter)"
-    $fileArgs = "powershell -NoExit -File `"$scriptPath`" -InputDrive `"$driveLetter`" -MoviesDir `"$MoviesDir`" -DiscIndex $discIdx -MinLength $MinLength"
+    $fileArgs = "powershell -NoExit -File `"$scriptPath`" -InputDrive `"$driveLetter`" -MoviesDir `"$MoviesDir`" -MinLength $MinLength"
 
     if ($i -eq 0) {
         # First drive: split horizontally from master, taking 90% of height
@@ -89,7 +88,7 @@ for ($i = 0; $i -lt $driveCount; $i++) {
         $size = [math]::Round(1 - (1 / ($driveCount - $i + 1)), 4)
         $wtParts += "split-pane -V -s $size --title `"$title`" $fileArgs"
     }
-    Write-Host "  $title (disc:$discIdx)" -ForegroundColor Green
+    Write-Host "  $title (dev:$($d.Letter))" -ForegroundColor Green
 }
 
 $wtCmdLine = '-w 0 ' + ($wtParts -join ' ; ')

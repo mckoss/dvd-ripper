@@ -12,8 +12,8 @@
     Root movies directory (default: G:\Movies).
 
 .PARAMETER TmdbApiKey
-    TMDb API key (v3). If not provided, reads from TMDB_API_KEY env var
-    or prompts interactively.
+    TMDb API key (v3). If not provided, reads from .tmdb-api-key file
+    in the script directory, or prompts interactively.
 
 .EXAMPLE
     .\fix-titles.ps1

@@ -13,9 +13,6 @@
 .PARAMETER MoviesDir
     Root movies directory (default: G:\Movies).
 
-.PARAMETER DiscIndex
-    MakeMKV disc index (auto-detected if -1).
-
 .PARAMETER MinLength
     Minimum title length in seconds to rip (default: 3600).
 
@@ -26,7 +23,6 @@
 param (
     [string]$InputDrive,
     [string]$MoviesDir,
-    [int]$DiscIndex = -1,
     [int]$MinLength = 3600
 )
 
@@ -55,14 +51,7 @@ if ([string]::IsNullOrWhiteSpace($MoviesDir)) {
 $OutputDir = Join-Path $MoviesDir "processing\ripped-for-encoding"
 $AlertSoundPath = Join-Path $PSScriptRoot "alert.wav"
 
-# Build MakeMKV drive argument: disc:N if provided, otherwise dev:X:
-if ($DiscIndex -ge 0) {
-    $driveArg = "disc:$DiscIndex"
-    Write-Host "Using $driveArg for drive $InputDriveLetter" -ForegroundColor Green
-} else {
-    $driveArg = "dev:$InputDriveLetter"
-    Write-Host "Using $driveArg (pass -DiscIndex N to use disc:N instead)" -ForegroundColor DarkGray
-}
+$driveArg = "dev:$InputDriveLetter"
 
 # Create a single sound player instance to reuse
 $soundPlayer = $null

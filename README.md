@@ -9,9 +9,10 @@ simply rescans its input folder to pick up where it left off.
 
 ## Quick Start
 
-1. **Start ripping** — Open a PowerShell terminal for each optical drive and run
-   `.\ripping-loop.ps1`. Each instance monitors one drive, rips the disc, ejects it,
-   and plays an alert sound so you know to insert the next one. Just keep feeding discs.
+1. **Start ripping** — Run `.\rip-all-drives.ps1` to launch parallel ripping
+   sessions in Windows Terminal for all detected optical drives. Each pane monitors
+   one drive, rips the disc, ejects it, and plays an alert sound so you know to
+   insert the next one. Just keep feeding discs.
 
 2. **Fix titles** — Run `.\fix-titles.ps1` to rename MKV and MP4 files to
    proper `Title (Year)` format using TMDb lookups. The script searches TMDb,
@@ -19,9 +20,10 @@ simply rescans its input folder to pick up where it left off.
    or correct each one. Use batch mode (`B`) to process 10 at a time.
 
 3. **Encode** — Run `.\encode-backlog.ps1` whenever you're ready. It shows which files
-   need encoding, archives already-encoded MKVs, and launches HandBrake pointed at
-   the ripped folder. In HandBrake, set the output to `processing\encoded-for-upload\`
-   and start the queue.
+   need encoding, archives already-encoded MKVs, and for each folder prompts:
+   **[Y]** rename titles then encode, **[E]** encode as-is (skip renaming), or
+   **[S]** skip. Launches HandBrake pointed at the ripped folder. In HandBrake,
+   set the output to `processing\encoded-for-upload\` and start the queue.
 
 4. **Upload** — Run `.\upload-mp4s.ps1` to push encoded MP4s to Google Drive via rclone.
    After uploading, it offers to move the files to the `MP4s\` archive folder.
@@ -31,12 +33,23 @@ Encoding and uploading are safe to run even while ripping is still in progress.
 
 ## Workflow Details
 
-### 1. Rip DVDs to MKV (`ripping-loop.ps1`)
+### 1. Rip DVDs to MKV
+
+#### Multi-drive (`rip-all-drives.ps1`)
+
+Detects all optical drives, lets you select which to use, then launches
+Windows Terminal with side-by-side panes running `ripping-loop.ps1` for each.
+
+```powershell
+.\rip-all-drives.ps1                              # prompted for movies dir
+.\rip-all-drives.ps1 -MinLength 1800              # shorter minimum title length
+```
+
+#### Single drive (`ripping-loop.ps1`)
 
 Continuously monitors an optical drive, rips inserted discs using
-[MakeMKV](https://www.makemkv.com/), ejects, and waits for the next disc.
-Run multiple instances in separate terminals for parallel ripping from
-different drives.
+[MakeMKV](https://www.makemkv.com/) via `dev:X:` (direct device access — no
+cross-drive scanning), ejects, and waits for the next disc.
 
 ```powershell
 .\ripping-loop.ps1                                            # prompted for drive and movies dir
@@ -50,8 +63,12 @@ Ripped files land in `processing/ripped-for-encoding/` with a `-check-title` suf
 ### 2. Encode with HandBrake (`encode-backlog.ps1`)
 
 Scans `processing/ripped-for-encoding/` for MKVs that need encoding.
-Flags any files still carrying a `-check-title` suffix that need confirmation.
 Automatically archives MKVs to `MKVs/` once a corresponding MP4 is found.
+For each folder, prompts with three options:
+- **Y** (default) — Rename titles via TMDb lookup, then launch HandBrake
+- **E** — Encode as-is, skipping all rename prompts
+- **S** — Skip the folder entirely
+
 Launches HandBrake pointed at the ripped folder for remaining files.
 
 ```powershell
@@ -160,15 +177,17 @@ MKVs are archived to `MKVs/` once encoding is confirmed.
   Each loop rescans its input folder, so they can be interrupted and restarted
   independently without losing track of progress.
 - **Continuous loop** -- Insert a disc, walk away, and come back to a folder full of MKV files.
-- **Multi-drive support** -- Run multiple instances of the script on different drives to rip
-  in parallel.
+- **Multi-drive support** -- `rip-all-drives.ps1` launches side-by-side Windows Terminal
+  panes for each optical drive. Uses `dev:X:` direct device access to avoid MakeMKV's
+  cross-drive scanning.
 - **Exponential backoff alerts** -- Plays an audio alert (WAV file) when waiting for a disc,
   with increasing intervals (2s -> 4s -> 8s -> ... up to 15 minutes). Alerts are
   silenced during quiet hours (11 PM – 7 AM).
 - **Smart file naming** -- Uses the disc volume label for filenames, falling back to the
   MKV filename from MakeMKV if the volume label is generic (e.g., `DVD_VIDEO`).
   All ripped files get a `-check-title` suffix until confirmed.
-- **Progress monitoring** -- Reports file size every 60 seconds while ripping.
+- **Progress monitoring** -- Reports file size and transfer speed (MB/s) every 60 seconds
+  while ripping. A speed of 0.0 MB/s indicates a stalled or retrying read.
 - **Transient disc filtering** -- Detects and ignores brief drive accessibility during
   disc ejection/insertion to avoid false starts.
 - **Safe cleanup** -- Temporary folders are only deleted if empty after the main file is moved.
@@ -236,12 +255,20 @@ directly:
 > **Note:** The `.tmdb-api-key` file is not checked into source control. Keep your
 > key private.
 
+## rip-all-drives.ps1 Parameters
+
+| Parameter     | Type   | Default                        | Description                              |
+|---------------|--------|--------------------------------|------------------------------------------|
+| `-MoviesDir`  | String | *(prompted interactively)*     | Root movies directory. Defaults to `G:\Movies`. |
+| `-MinLength`  | Int    | `3600`                         | Minimum title length in seconds to rip. Passed to each `ripping-loop.ps1` instance. |
+
 ## ripping-loop.ps1 Parameters
 
 | Parameter     | Type   | Default                        | Description                              |
 |---------------|--------|--------------------------------|------------------------------------------|
 | `-InputDrive` | String | *(prompted interactively)*     | The drive letter to monitor. Accepts with or without a colon (e.g., `F` or `F:`). If omitted, the script prompts for it with a default of `D`. |
 | `-MoviesDir`  | String | *(prompted interactively)*     | Root movies directory. Ripped files are saved to `processing\ripped-for-encoding\` under this path. Defaults to `G:\Movies`. |
+| `-MinLength`  | Int    | `3600`                         | Minimum title length in seconds to rip (skips menus, extras, etc.). |
 
 ## encode-backlog.ps1 Parameters
 
