@@ -209,35 +209,30 @@ while ($true) {
 
     Write-Host "Extraction started. Monitoring file size..."
 
-    # Monitor file size
+    # Monitor file size (sum of all MKV files in temp directory)
     $progressCounter = 0
-    $trackedMkvFile = $null
     $lastSizeBytes = 0
+    $lastFileCount = 0
     while (-not $process.HasExited) {
         Start-Sleep -Seconds 2
         $progressCounter += 2
 
         # Write progress every 60 seconds (30 iterations of 2-second checks)
         if ($progressCounter -ge 60) {
-            # Only search for MKV file if we haven't found one yet
-            if ($null -eq $trackedMkvFile) {
-                $mkvFile = Get-ChildItem -Path $TempOutputDir -Filter *.mkv | Sort-Object Length -Descending | Select-Object -First 1
-                if ($mkvFile) {
-                    $trackedMkvFile = $mkvFile
-                    $lastSizeBytes = $mkvFile.Length
-                    Write-Host "[$InputDriveLetter] Detected MKV file: $($trackedMkvFile.Name)"
+            $mkvFiles = @(Get-ChildItem -Path $TempOutputDir -Filter *.mkv -ErrorAction SilentlyContinue)
+            if ($mkvFiles.Count -gt 0) {
+                if ($mkvFiles.Count -ne $lastFileCount) {
+                    $mkvFiles | Where-Object { $_.Length -gt 0 } | ForEach-Object {
+                        Write-Host "[$InputDriveLetter] Writing: $($_.Name)"
+                    }
+                    $lastFileCount = $mkvFiles.Count
                 }
-            }
 
-            # Show progress using the tracked file
-            if ($null -ne $trackedMkvFile) {
-                # Refresh the file info to get current size
-                $trackedMkvFile.Refresh()
-                $currentBytes = $trackedMkvFile.Length
+                $currentBytes = ($mkvFiles | Measure-Object -Property Length -Sum).Sum
                 $sizeMB = [math]::Round($currentBytes / 1MB, 2)
                 $speedMBs = [math]::Round(($currentBytes - $lastSizeBytes) / 1MB / 60, 1)
                 $lastSizeBytes = $currentBytes
-                Write-Host "[$InputDriveLetter] Progress: $sizeMB MB written ($speedMBs MB/s)"
+                Write-Host "[$InputDriveLetter] Progress: $sizeMB MB total ($($mkvFiles.Count) file(s), $speedMBs MB/s)"
             }
             $progressCounter = 0
         }
