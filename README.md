@@ -260,7 +260,7 @@ directly:
 | Parameter     | Type   | Default                        | Description                              |
 |---------------|--------|--------------------------------|------------------------------------------|
 | `-MoviesDir`  | String | *(prompted interactively)*     | Root movies directory. Defaults to `G:\Movies`. |
-| `-MinLength`  | Int    | `3600`                         | Minimum title length in seconds to rip. Passed to each `ripping-loop.ps1` instance. |
+| `-MinLength`  | Int    | `120`                          | Minimum title length in seconds to rip. Passed to each `ripping-loop.ps1` instance. |
 
 ## ripping-loop.ps1 Parameters
 
@@ -268,7 +268,7 @@ directly:
 |---------------|--------|--------------------------------|------------------------------------------|
 | `-InputDrive` | String | *(prompted interactively)*     | The drive letter to monitor. Accepts with or without a colon (e.g., `F` or `F:`). If omitted, the script prompts for it with a default of `D`. |
 | `-MoviesDir`  | String | *(prompted interactively)*     | Root movies directory. Ripped files are saved to `processing\ripped-for-encoding\` under this path. Defaults to `G:\Movies`. |
-| `-MinLength`  | Int    | `3600`                         | Minimum title length in seconds to rip (skips menus, extras, etc.). |
+| `-MinLength`  | Int    | `120`                          | Minimum title length in seconds to rip (skips menus, extras, etc.). |
 
 ## encode-backlog.ps1 Parameters
 
@@ -310,4 +310,4 @@ The following variables can be modified at the top of `ripping-loop.ps1`:
 | Variable          | Default                                           | Description                                      |
 |-------------------|---------------------------------------------------|--------------------------------------------------|
 | `$MakeMkvPath`    | `C:\Program Files (x86)\MakeMKV\makemkvcon64.exe` | Path to the MakeMKV command-line tool.           |
-| `$MinLength`      | `3600` (seconds)                                  | Minimum title length to extract (skips menus, extras, etc.). |
+| `$MinLength`      | `120` (seconds)                                   | Minimum title length to extract (skips menus, extras, etc.). |

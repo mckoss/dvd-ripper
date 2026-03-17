@@ -14,7 +14,7 @@
     Root movies directory (default: G:\Movies).
 
 .PARAMETER MinLength
-    Minimum title length in seconds to rip (default: 3600).
+    Minimum title length in seconds to rip (default: 120).
 
 .EXAMPLE
     .\ripping-loop.ps1
@@ -23,7 +23,7 @@
 param (
     [string]$InputDrive,
     [string]$MoviesDir,
-    [int]$MinLength = 3600
+    [int]$MinLength = 120
 )
 
 $MakeMkvPath = "C:\Program Files (x86)\MakeMKV\makemkvcon64.exe"

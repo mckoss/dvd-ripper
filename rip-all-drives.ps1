@@ -11,7 +11,7 @@
     Root movies directory (default: G:\Movies).
 
 .PARAMETER MinLength
-    Minimum title length in seconds to rip (default: 3600).
+    Minimum title length in seconds to rip (default: 120).
 
 .EXAMPLE
     .\rip-all-drives.ps1
@@ -19,7 +19,7 @@
 #>
 param (
     [string]$MoviesDir,
-    [int]$MinLength = 3600
+    [int]$MinLength = 120
 )
 
 if ([string]::IsNullOrWhiteSpace($MoviesDir)) {
